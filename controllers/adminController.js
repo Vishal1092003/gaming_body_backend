@@ -11,21 +11,25 @@ const listUsers = async (req, res, next) => {
   try {
     const search = String(req.query.search || '').trim();
     const limit = Math.min(Math.max(Number(req.query.limit || 25), 1), 100);
+    const adminId = Number(req.user.sub);
 
     let result;
     if (search) {
       result = await query(
         `SELECT TOP (${limit}) id, username, email, balance, is_admin, created_by_admin_id, created_at
          FROM users
-         WHERE LOWER(username) LIKE LOWER($1) OR LOWER(email) LIKE LOWER($1)
+         WHERE (LOWER(username) LIKE LOWER($1) OR LOWER(email) LIKE LOWER($1))
+           AND created_by_admin_id = $2
          ORDER BY id DESC`,
-        [`%${search}%`]
+        [`%${search}%`, adminId]
       );
     } else {
       result = await query(
         `SELECT TOP (${limit}) id, username, email, balance, is_admin, created_by_admin_id, created_at
          FROM users
-         ORDER BY id DESC`
+         WHERE created_by_admin_id = $1
+         ORDER BY id DESC`,
+        [adminId]
       );
     }
 
@@ -53,8 +57,17 @@ const creditUserBalance = async (req, res, next) => {
     }
 
     const userId = Number(req.params.userId);
+    const adminId = Number(req.user.sub);
     if (!Number.isInteger(userId) || userId <= 0) {
       return res.status(400).json({ error: 'Invalid user id' });
+    }
+
+    const ownerCheck = await query(
+      'SELECT id FROM users WHERE id = $1 AND created_by_admin_id = $2',
+      [userId, adminId]
+    );
+    if (ownerCheck.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found or not managed by this admin' });
     }
 
     const updated = await query(
@@ -99,13 +112,17 @@ const resetUserPassword = async (req, res, next) => {
     }
 
     const userId = Number(req.params.userId);
+    const adminId = Number(req.user.sub);
     if (!Number.isInteger(userId) || userId <= 0) {
       return res.status(400).json({ error: 'Invalid user id' });
     }
 
-    const exists = await query('SELECT id FROM users WHERE id = $1', [userId]);
+    const exists = await query(
+      'SELECT id FROM users WHERE id = $1 AND created_by_admin_id = $2',
+      [userId, adminId]
+    );
     if (exists.rowCount === 0) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: 'User not found or not managed by this admin' });
     }
 
     const passwordHash = bcrypt.hashSync(value.newPassword, 12);
