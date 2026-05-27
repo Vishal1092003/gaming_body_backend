@@ -163,6 +163,16 @@ const walletRequestDecisionSchema = Joi.object({
   note: Joi.string().trim().max(160).allow('').optional(),
 });
 
+const supportTicketSchema = Joi.object({
+  issueType: Joi.string().trim().min(2).max(60).required().messages({
+    'string.empty': 'Issue type is required',
+  }),
+  message: Joi.string().trim().min(5).max(1200).required().messages({
+    'string.empty': 'Message is required',
+    'string.min': 'Message should have at least 5 characters',
+  }),
+});
+
 module.exports = {
   loginSchema,
   registerSchema,
@@ -174,4 +184,5 @@ module.exports = {
   adminCreateUserSchema,
   walletRequestSchema,
   walletRequestDecisionSchema,
+  supportTicketSchema,
 };

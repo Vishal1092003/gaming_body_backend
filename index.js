@@ -10,6 +10,7 @@ const authRoutes = require('./routes/authRoutes');
 const betRoutes = require('./routes/betRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const walletRoutes = require('./routes/walletRoutes');
+const supportRoutes = require('./routes/supportRoutes');
 const { isMailerConfigured } = require('./config/mailer');
 const { syncEnvSecretsToDb, hydrateProcessEnvFromDb } = require('./config/secretStore');
 const { errorHandler, notFound } = require('./middleware/errorMiddleware');
@@ -44,6 +45,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/bets', betRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/wallet', walletRoutes);
+app.use('/api/support', supportRoutes);
 app.get('/api/health', async (req, res) => {
   try {
     await query('SELECT 1');
@@ -62,7 +64,9 @@ app.get('/api/health', async (req, res) => {
     });
   }
 });
-
+// Live scores streaming & metrics
+const liveRoutes = require('./routes/liveRoutes');
+app.use('/api', liveRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
@@ -103,6 +107,12 @@ const start = async () => {
       'POST /api/admin/users/:userId/credit',
       'POST /api/admin/users/:userId/reset-password',
       'GET  /api/health',
+      'GET  /api/live-scores',
+      'GET  /api/live-scores/stream',
+      'GET  /api/scheduled-scores',
+      'GET  /api/metrics',
+      'GET  /api/support/context',
+      'POST /api/support/tickets',
     ].forEach((route) => console.log(`  - ${route} [OK]`));
     await query(`
       IF OBJECT_ID('users', 'U') IS NULL
@@ -179,6 +189,18 @@ const start = async () => {
         admin_note VARCHAR(160) NULL,
         decided_by INT NULL,
         decided_at DATETIME2 NULL,
+        created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+      );
+    `);
+    await query(`
+      IF OBJECT_ID('support_tickets', 'U') IS NULL
+      CREATE TABLE support_tickets (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        user_id INT NOT NULL,
+        issue_type VARCHAR(60) NOT NULL,
+        message NVARCHAR(1200) NOT NULL,
+        admin_email VARCHAR(254) NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'open',
         created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
       );
     `);
