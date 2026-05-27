@@ -58,14 +58,14 @@ const sendResetCodeEmail = async ({ to, code }) => {
   return true;
 };
 
-const sendAdminAlertEmail = async ({ subject, text, html }) => {
+const sendAdminAlertEmail = async ({ to, subject, text, html }) => {
   const { transporter, mailerConfig } = getTransporter();
   if (!transporter || !mailerConfig) {
     console.warn('[MAIL] SMTP is not configured. Skipping admin alert email send.');
     return false;
   }
 
-  const adminRecipient = process.env.ADMIN_EMAIL || process.env.SMTP_USER;
+  const adminRecipient = to || process.env.ADMIN_EMAIL || process.env.SMTP_USER;
   if (!adminRecipient) {
     console.warn('[MAIL] ADMIN_EMAIL/SMTP_USER is missing. Skipping admin alert email send.');
     return false;

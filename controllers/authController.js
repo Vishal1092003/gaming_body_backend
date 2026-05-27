@@ -79,7 +79,10 @@ const register = async (req, res, next) => {
   }
 };
 
+const { recordLoginDuration } = require('../services/metrics');
+
 const login = async (req, res, next) => {
+  const started = Date.now();
   try {
     const { error, value } = loginSchema.validate(req.body, { abortEarly: false });
     if (error) {
@@ -92,16 +95,19 @@ const login = async (req, res, next) => {
     );
 
     if (userResult.rowCount === 0) {
+      recordLoginDuration(Date.now() - started);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     const user = userResult.rows[0];
     const valid = bcrypt.compareSync(value.password, user.password_hash);
     if (!valid) {
+      recordLoginDuration(Date.now() - started);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     const token = buildToken(user);
+    recordLoginDuration(Date.now() - started);
     return res.json({
       token,
       expiresIn: getJwtExpiry(),
@@ -114,6 +120,7 @@ const login = async (req, res, next) => {
       },
     });
   } catch (err) {
+    recordLoginDuration(Date.now() - started);
     next(err);
   }
 };
