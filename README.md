@@ -88,3 +88,27 @@ Typical Render settings:
 - Health Check Path: `/api/health`
 
 Ensure all environment variables are set in Render dashboard.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User App
+    participant API as Backend API
+    participant DB as MSSQL (support_tickets)
+    participant A as Admin App
+
+    U->>API: POST /api/support/tickets {issueType, message}
+    API->>DB: INSERT support_tickets (status='open')
+    DB-->>API: ticket(id,...)
+    API-->>U: 201 Support request submitted
+
+    A->>API: GET /api/support/tickets
+    API->>DB: SELECT tickets ORDER BY created_at DESC
+    DB-->>API: tickets[]
+    API-->>A: tickets list
+
+    A->>API: POST /api/support/tickets/:ticketId/reply {reply}
+    API->>DB: UPDATE support_tickets\nSET admin_reply, status='answered'
+    DB-->>API: rowsAffected > 0
+    API-->>A: 200 {ok: true}
+```

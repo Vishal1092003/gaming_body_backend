@@ -174,6 +174,35 @@ const listTicketsAdmin = async (req, res, next) => {
   }
 };
 
+const listMyTickets = async (req, res, next) => {
+  try {
+    const userId = Number(req.user?.sub);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const rows = await query(
+      `
+      SELECT
+        id,
+        user_id,
+        issue_type,
+        message,
+        status,
+        admin_reply,
+        replied_by,
+        replied_at,
+        created_at
+      FROM support_tickets
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+      `,
+      [userId]
+    );
+    return res.json({ tickets: rows.rows || [] });
+  } catch (err) {
+    next(err);
+  }
+};
+
 const replyTicketAdmin = async (req, res, next) => {
   try {
     const ticketId = Number(req.params?.ticketId);
@@ -196,7 +225,7 @@ const replyTicketAdmin = async (req, res, next) => {
       [reply, adminUserId, ticketId]
     );
 
-    const rowsAffected = Array.isArray(updated.rowsAffected) ? updated.rowsAffected[0] : 0;
+    const rowsAffected = Array.isArray(updated.rowsAffected) ? updated.rowsAffected[0] : Number(updated.rowCount || 0);
     if (!rowsAffected) return res.status(404).json({ error: 'Ticket not found' });
     return res.json({ ok: true });
   } catch (err) {
@@ -207,7 +236,7 @@ const replyTicketAdmin = async (req, res, next) => {
 module.exports = {
   getSupportContext,
   createSupportTicket,
+  listMyTickets,
   listTicketsAdmin,
   replyTicketAdmin,
 };
-

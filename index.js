@@ -104,6 +104,7 @@ const start = async () => {
       'POST /api/wallet/requests/:requestId/decide',
       'GET  /api/support/context',
       'POST /api/support/tickets',
+      'GET  /api/support/my-tickets',
       'GET  /api/support/tickets (admin)',
       'POST /api/support/tickets/:ticketId/reply (admin)',
       'GET  /api/admin/users',
@@ -117,6 +118,7 @@ const start = async () => {
       'GET  /api/metrics',
       'GET  /api/support/context',
       'POST /api/support/tickets',
+      'GET  /api/support/my-tickets',
     ].forEach((route) => console.log(`  - ${route} [OK]`));
     await query(`
       IF OBJECT_ID('users', 'U') IS NULL
