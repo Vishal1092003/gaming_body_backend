@@ -32,17 +32,18 @@ const resolveAdminRecipient = async (userId) => {
      WHERE u.id = $1`,
     [userId]
   );
-  const ownerEmail = ownerResult.rows[0]?.email;
+  const ownerEmail = ownerResult.rows?.[0]?.email;
   if (ownerEmail) return ownerEmail;
   return process.env.ADMIN_EMAIL || process.env.SMTP_USER || null;
 };
 
 const getSupportContext = async (req, res, next) => {
   try {
-    const userId = req.user.sub;
+    const userId = Number(req.user?.sub);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    const [profileRes, betRes, walletRes, recentRes] = await Promise.all([
-      query('SELECT id, username, email, balance, created_at FROM users WHERE id = $1', [userId]),
+    const [profileRes, betRes, walletRes] = await Promise.all([
+      query('SELECT id, username, email, balance, created_at, is_admin FROM users WHERE id = $1', [userId]),
       query(
         `SELECT
            COUNT(*) AS total_bets,
@@ -60,36 +61,26 @@ const getSupportContext = async (req, res, next) => {
          WHERE user_id = $1`,
         [userId]
       ),
-      query(
-        `SELECT TOP 5 id, type, amount, status, created_at
-         FROM wallet_requests
-         WHERE user_id = $1
-         ORDER BY created_at DESC`,
-        [userId]
-      ),
     ]);
 
-    if (profileRes.rowCount === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    if ((profileRes.rowCount || 0) === 0) return res.status(404).json({ error: 'User not found' });
 
     const profile = profileRes.rows[0];
-    const betStats = betRes.rows[0] || {};
-    const walletStats = walletRes.rows[0] || {};
+    const betStats = betRes.rows?.[0] || {};
+    const walletStats = walletRes.rows?.[0] || {};
 
-    const isAdmin = Boolean(req.user?.isAdmin);
+    const isAdmin = Boolean(req.user?.isAdmin || profile.is_admin);
     const suggestedIssues = isAdmin ? [...ADMIN_ISSUES] : [...USER_ISSUES];
-    if (Number(walletStats.open_wallet_requests || 0) > 0 && !suggestedIssues.includes('Pending wallet request')) {
-      suggestedIssues.unshift('Pending wallet request');
-    }
 
     return res.json({
+      suggestedIssues,
       profile: {
         id: profile.id,
         username: profile.username,
         email: profile.email,
         balance: Number(profile.balance || 0),
         joinedAt: profile.created_at,
+        isAdmin,
       },
       summary: {
         totalBets: Number(betStats.total_bets || 0),
@@ -98,8 +89,6 @@ const getSupportContext = async (req, res, next) => {
         openWalletRequests: Number(walletStats.open_wallet_requests || 0),
         approvedWalletRequests: Number(walletStats.approved_wallet_requests || 0),
       },
-      recentWalletRequests: recentRes.rows || [],
-      suggestedIssues,
     });
   } catch (err) {
     next(err);
@@ -113,46 +102,40 @@ const createSupportTicket = async (req, res, next) => {
       return res.status(400).json({ error: 'Validation failed', details: error.details.map((d) => d.message) });
     }
 
-    const adminRecipient = await resolveAdminRecipient(req.user.sub);
+    const userId = Number(req.user?.sub);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const adminRecipient = await resolveAdminRecipient(userId);
 
     const insertResult = await query(
       `INSERT INTO support_tickets (user_id, issue_type, message, admin_email, status)
        VALUES ($1, $2, $3, $4, 'open');
-       SELECT TOP 1 id, issue_type, message, status, created_at
+       SELECT TOP 1
+         id, user_id, issue_type, message, admin_email, status, admin_reply, replied_by, replied_at, created_at
        FROM support_tickets
        WHERE user_id = $1
        ORDER BY id DESC`,
-      [req.user.sub, value.issueType, value.message, adminRecipient]
+      [userId, value.issueType, value.message, adminRecipient]
     );
 
-    const ticket = insertResult.rows[0];
+    const ticket = insertResult.rows?.[0];
 
-    try {
-      await sendAdminAlertEmail({
-        to: adminRecipient,
-        subject: `Support ticket #${ticket.id} from ${req.user.username}`,
-        text:
-          `New support ticket received.\n\n` +
-          `Ticket ID: ${ticket.id}\n` +
-          `User ID: ${req.user.sub}\n` +
-          `Username: ${req.user.username}\n` +
-          `Email: ${req.user.email}\n` +
-          `Issue: ${value.issueType}\n` +
-          `Message: ${value.message}`,
-        html: `
-          <div style="font-family:Arial,sans-serif;line-height:1.45">
-            <h3>New Support Ticket</h3>
-            <p><b>Ticket ID:</b> ${ticket.id}</p>
-            <p><b>User ID:</b> ${req.user.sub}</p>
-            <p><b>Username:</b> ${req.user.username}</p>
-            <p><b>Email:</b> ${req.user.email}</p>
-            <p><b>Issue:</b> ${value.issueType}</p>
-            <p><b>Message:</b><br/>${String(value.message).replace(/</g, '&lt;')}</p>
-          </div>
-        `,
-      });
-    } catch (mailErr) {
-      console.error('[MAIL] Support ticket notification failed:', mailErr.message);
+    if (adminRecipient) {
+      try {
+        await sendAdminAlertEmail({
+          to: adminRecipient,
+          subject: `Support ticket #${ticket?.id || ''} from ${req.user.username}`,
+          text:
+            `New support ticket received.\n\n` +
+            `User ID: ${userId}\n` +
+            `Username: ${req.user.username}\n` +
+            `Email: ${req.user.email}\n` +
+            `Issue: ${value.issueType}\n` +
+            `Message: ${value.message}`,
+        });
+      } catch (mailErr) {
+        console.error('[MAIL] Support ticket notification failed:', mailErr.message);
+      }
     }
 
     return res.status(201).json({
@@ -164,7 +147,67 @@ const createSupportTicket = async (req, res, next) => {
   }
 };
 
+const listTicketsAdmin = async (req, res, next) => {
+  try {
+    const rows = await query(
+      `
+      SELECT
+        t.id,
+        t.user_id,
+        u.username,
+        u.email,
+        t.issue_type,
+        t.message,
+        t.status,
+        t.admin_reply,
+        t.replied_by,
+        t.replied_at,
+        t.created_at
+      FROM support_tickets t
+      JOIN users u ON u.id = t.user_id
+      ORDER BY t.created_at DESC
+      `
+    );
+    return res.json({ tickets: rows.rows || [] });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const replyTicketAdmin = async (req, res, next) => {
+  try {
+    const ticketId = Number(req.params?.ticketId);
+    if (!ticketId) return res.status(400).json({ error: 'Invalid ticketId' });
+
+    const reply = String(req.body?.reply || '').trim();
+    if (!reply) return res.status(400).json({ error: 'Reply is required' });
+
+    const adminUserId = Number(req.user?.sub);
+    const updated = await query(
+      `
+      UPDATE support_tickets
+      SET
+        admin_reply = $1,
+        replied_by = $2,
+        replied_at = SYSUTCDATETIME(),
+        status = 'answered'
+      WHERE id = $3
+      `,
+      [reply, adminUserId, ticketId]
+    );
+
+    const rowsAffected = Array.isArray(updated.rowsAffected) ? updated.rowsAffected[0] : 0;
+    if (!rowsAffected) return res.status(404).json({ error: 'Ticket not found' });
+    return res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   getSupportContext,
   createSupportTicket,
+  listTicketsAdmin,
+  replyTicketAdmin,
 };
+

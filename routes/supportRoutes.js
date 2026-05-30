@@ -1,10 +1,23 @@
 const express = require('express');
 const { authenticate } = require('../middleware/authMiddleware');
-const { getSupportContext, createSupportTicket } = require('../controllers/supportController');
+const { requireAdmin } = require('../middleware/adminMiddleware');
+const {
+  getSupportContext,
+  createSupportTicket,
+  listTicketsAdmin,
+  replyTicketAdmin,
+} = require('../controllers/supportController');
 
 const router = express.Router();
 
-router.get('/context', authenticate, getSupportContext);
-router.post('/tickets', authenticate, createSupportTicket);
+router.use(authenticate);
+
+router.get('/context', getSupportContext);
+router.post('/tickets', createSupportTicket);
+
+// Admin inbox + replies
+router.get('/tickets', requireAdmin, listTicketsAdmin);
+router.post('/tickets/:ticketId/reply', requireAdmin, replyTicketAdmin);
 
 module.exports = router;
+

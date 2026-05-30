@@ -35,6 +35,7 @@ const parseSqlServerUrl = (value) => {
     database: kv.database || kv['initial catalog'],
     user: kv['user id'] || kv.uid || kv.user,
     password: kv.password || kv.pwd,
+    requestTimeout: Number(kv.requesttimeout || 20000),
     options: {
       encrypt: String(kv.encrypt || 'true').toLowerCase() === 'true',
       trustServerCertificate: String(kv.trustservercertificate || 'false').toLowerCase() === 'true',
@@ -64,6 +65,7 @@ const mapResult = (result) => ({
 const query = async (text, params = []) => {
   await poolConnect;
   const request = pool.request();
+  request.timeout = config.requestTimeout || 20000;
   bindParams(request, params);
   const result = await request.query(normalizeSql(text));
   return mapResult(result);
