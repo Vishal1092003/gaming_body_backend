@@ -14,7 +14,7 @@ Health check:
 
 - Node.js
 - Express
-- PostgreSQL (via `DATABASE_URL`)
+- SQL Server / Azure SQL (via `DATABASE_URL`)
 - JWT authentication
 - Nodemailer
 
@@ -52,7 +52,6 @@ Required and commonly used keys:
 - `JWT_SECRET`
 - `JWT_EXPIRY`
 - `DATABASE_URL`
-- `PGSSLMODE`
 - `SMTP_HOST`
 - `SMTP_PORT`
 - `SMTP_SECURE`

@@ -211,6 +211,10 @@ const start = async () => {
         created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
       );
     `);
+    await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','admin_email') IS NULL ALTER TABLE support_tickets ADD admin_email VARCHAR(254) NULL;`);
+    await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','admin_reply') IS NULL ALTER TABLE support_tickets ADD admin_reply NVARCHAR(MAX) NULL;`);
+    await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','replied_by') IS NULL ALTER TABLE support_tickets ADD replied_by INT NULL;`);
+    await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','replied_at') IS NULL ALTER TABLE support_tickets ADD replied_at DATETIME2 NULL;`);
     console.log(`[HEALTH] Admin signup hash: ${process.env.ADMIN_SIGNUP_CODE_HASH ? 'STORED' : 'NOT SET (admin self-signup disabled)'}`);
     if (process.env.ADMIN_EMAIL) {
       await query('UPDATE users SET is_admin = TRUE WHERE lower(email) = lower($1)', [process.env.ADMIN_EMAIL.trim()]);
