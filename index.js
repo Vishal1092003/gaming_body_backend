@@ -102,6 +102,10 @@ const start = async () => {
       'GET  /api/wallet/requests/mine',
       'GET  /api/wallet/requests',
       'POST /api/wallet/requests/:requestId/decide',
+      'GET  /api/support/context',
+      'POST /api/support/tickets',
+      'GET  /api/support/tickets (admin)',
+      'POST /api/support/tickets/:ticketId/reply (admin)',
       'GET  /api/admin/users',
       'POST /api/admin/users',
       'POST /api/admin/users/:userId/credit',
@@ -198,9 +202,12 @@ const start = async () => {
         id INT IDENTITY(1,1) PRIMARY KEY,
         user_id INT NOT NULL,
         issue_type VARCHAR(60) NOT NULL,
-        message NVARCHAR(1200) NOT NULL,
+        message NVARCHAR(MAX) NOT NULL,
         admin_email VARCHAR(254) NULL,
-        status VARCHAR(20) NOT NULL DEFAULT 'open',
+        status VARCHAR(20) NOT NULL DEFAULT 'open', -- open | answered | closed
+        admin_reply NVARCHAR(MAX) NULL,
+        replied_by INT NULL,
+        replied_at DATETIME2 NULL,
         created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
       );
     `);
