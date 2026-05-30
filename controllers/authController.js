@@ -108,7 +108,9 @@ const login = async (req, res, next) => {
 
     if (value.adminLogin && !Boolean(user.is_admin)) {
       recordLoginDuration(Date.now() - started);
-      return res.status(403).json({ error: 'You are not the admin.' });
+      return res.status(403).json({
+        error: 'This account is not an admin. Please disable admin login or sign in with an admin account.',
+      });
     }
 
     const token = buildToken(user);
