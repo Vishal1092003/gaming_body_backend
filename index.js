@@ -10,6 +10,7 @@ const authRoutes = require('./routes/authRoutes');
 const betRoutes = require('./routes/betRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const walletRoutes = require('./routes/walletRoutes');
+const supportRoutes = require('./routes/supportRoutes');
 const { isMailerConfigured } = require('./config/mailer');
 const { syncEnvSecretsToDb, hydrateProcessEnvFromDb } = require('./config/secretStore');
 const { errorHandler, notFound } = require('./middleware/errorMiddleware');
@@ -44,6 +45,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/bets', betRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/wallet', walletRoutes);
+app.use('/api/support', supportRoutes);
 app.get('/api/health', async (req, res) => {
   try {
     await query('SELECT 1');
@@ -98,6 +100,10 @@ const start = async () => {
       'GET  /api/wallet/requests/mine',
       'GET  /api/wallet/requests',
       'POST /api/wallet/requests/:requestId/decide',
+      'GET  /api/support/context',
+      'POST /api/support/tickets',
+      'GET  /api/support/tickets (admin)',
+      'POST /api/support/tickets/:ticketId/reply (admin)',
       'GET  /api/admin/users',
       'POST /api/admin/users',
       'POST /api/admin/users/:userId/credit',
@@ -179,6 +185,20 @@ const start = async () => {
         admin_note VARCHAR(160) NULL,
         decided_by INT NULL,
         decided_at DATETIME2 NULL,
+        created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+      );
+    `);
+    await query(`
+      IF OBJECT_ID('support_tickets', 'U') IS NULL
+      CREATE TABLE support_tickets (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        user_id INT NOT NULL,
+        issue_type VARCHAR(48) NOT NULL,
+        message NVARCHAR(MAX) NOT NULL,
+        status VARCHAR(16) NOT NULL DEFAULT 'open', -- open | answered | closed
+        admin_reply NVARCHAR(MAX) NULL,
+        replied_by INT NULL,
+        replied_at DATETIME2 NULL,
         created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
       );
     `);
