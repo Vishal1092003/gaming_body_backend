@@ -86,4 +86,44 @@ const getSummary = async (req, res, next) => {
   }
 };
 
-module.exports = { createBet, getHistory, getWins, getLosses, getSummary };
+const getAdminHistory = async (req, res, next) => {
+  try {
+    const rawLimit = Number(req.query?.limit);
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 500) : 200;
+    const search = String(req.query?.search || '').trim();
+
+    const where = search
+      ? `WHERE (LOWER(u.username) LIKE LOWER($1) OR LOWER(u.email) LIKE LOWER($1))`
+      : '';
+    const params = search ? [`%${search}%`] : [];
+
+    const result = await query(
+      `
+      SELECT TOP (${limit})
+        b.id,
+        b.user_id,
+        u.username,
+        u.email,
+        b.[date],
+        b.[type],
+        b.stake,
+        b.odds,
+        b.winnings,
+        b.status,
+        b.match_label,
+        b.created_at
+      FROM bets b
+      JOIN users u ON u.id = b.user_id
+      ${where}
+      ORDER BY b.created_at DESC
+      `,
+      params
+    );
+
+    return res.json({ history: result.rows || [] });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = { createBet, getHistory, getWins, getLosses, getSummary, getAdminHistory };

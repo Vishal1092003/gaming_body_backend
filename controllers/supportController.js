@@ -202,7 +202,6 @@ const listMyTickets = async (req, res, next) => {
     next(err);
   }
 };
-
 const replyTicketAdmin = async (req, res, next) => {
   try {
     const ticketId = Number(req.params?.ticketId);
@@ -225,7 +224,9 @@ const replyTicketAdmin = async (req, res, next) => {
       [reply, adminUserId, ticketId]
     );
 
-    const rowsAffected = Array.isArray(updated.rowsAffected) ? updated.rowsAffected[0] : Number(updated.rowCount || 0);
+    const rowsAffected = Array.isArray(updated.rowsAffected)
+      ? updated.rowsAffected[0]
+      : Number(updated.rowCount || 0);
     if (!rowsAffected) return res.status(404).json({ error: 'Ticket not found' });
     return res.json({ ok: true });
   } catch (err) {
