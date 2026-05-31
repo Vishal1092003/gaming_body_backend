@@ -82,7 +82,7 @@ const getSummary = async (req, res, next) => {
       netProfit: net_profit,
     });
   } catch (err) {
-    next(err);
+    next(err); 
   }
 };
 
