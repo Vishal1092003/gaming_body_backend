@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
 
 dotenv.config();
@@ -20,33 +19,12 @@ const app = express();
 const PORT = process.env.PORT || 8000;
 
 // Ensure correct client IP behind reverse proxies (Render, Fly, Nginx, etc.)
-// so rate limiting doesn't treat all users as the same IP.
+// so IP-based protections work as expected.
 app.set('trust proxy', 1);
-
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 300,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => {
-    const xfwd = req.headers['x-forwarded-for'];
-    if (typeof xfwd === 'string' && xfwd.trim()) return xfwd.split(',')[0].trim();
-    return req.ip;
-  },
-});
 
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
-// Apply rate limiting after auth routes so login/register aren't impacted by heavy polling elsewhere.
-// Keep a separate (more lenient) limiter for auth to prevent brute force while avoiding false 429s.
-const authLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 60,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: limiter.keyGenerator,
-});
 
 // Request log to verify every API hit in terminal
 app.use((req, res, next) => {
@@ -58,8 +36,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use('/api/auth', authLimiter, authRoutes);
-app.use(limiter);
+app.use('/api/auth', authRoutes);
 app.use('/api/bets', betRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/wallet', walletRoutes);

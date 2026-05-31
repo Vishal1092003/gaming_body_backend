@@ -1,6 +1,7 @@
 const express = require('express');
 const { authenticate } = require('../middleware/authMiddleware');
 const { requireAdmin } = require('../middleware/adminMiddleware');
+const { createSupportTicketLimiter } = require('../middleware/rateLimiters');
 const {
   getSupportContext,
   createSupportTicket,
@@ -14,7 +15,7 @@ const router = express.Router();
 router.use(authenticate);
 
 router.get('/context', getSupportContext);
-router.post('/tickets', createSupportTicket);
+router.post('/tickets', createSupportTicketLimiter(), createSupportTicket);
 router.get('/my-tickets', listMyTickets);
 
 // Admin inbox + replies
