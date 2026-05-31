@@ -27,7 +27,23 @@ const createBet = async (req, res, next) => {
 
 const getHistory = async (req, res, next) => {
   try {
-    const result = await query('SELECT * FROM bets WHERE user_id = $1 ORDER BY created_at DESC', [req.user.sub]);
+    const result = await query(
+      `SELECT
+         id,
+         user_id,
+         [date],
+         [type],
+         stake,
+         odds,
+         CASE WHEN status IN ('Paid Out', 'Incremented') THEN ROUND(stake * odds, 0) ELSE 0 END AS winnings,
+         status,
+         match_label,
+         created_at
+       FROM bets
+       WHERE user_id = $1
+       ORDER BY created_at DESC`,
+      [req.user.sub]
+    );
     return res.json({ history: result.rows });
   } catch (err) {
     next(err);
@@ -37,7 +53,20 @@ const getHistory = async (req, res, next) => {
 const getWins = async (req, res, next) => {
   try {
     const result = await query(
-      "SELECT * FROM bets WHERE user_id = $1 AND status IN ('Paid Out', 'Incremented') ORDER BY created_at DESC",
+      `SELECT
+         id,
+         user_id,
+         [date],
+         [type],
+         stake,
+         odds,
+         ROUND(stake * odds, 0) AS winnings,
+         status,
+         match_label,
+         created_at
+       FROM bets
+       WHERE user_id = $1 AND status IN ('Paid Out', 'Incremented')
+       ORDER BY created_at DESC`,
       [req.user.sub]
     );
     return res.json({ wins: result.rows });
@@ -49,7 +78,20 @@ const getWins = async (req, res, next) => {
 const getLosses = async (req, res, next) => {
   try {
     const result = await query(
-      "SELECT * FROM bets WHERE user_id = $1 AND status IN ('Lost', 'Decremented') ORDER BY created_at DESC",
+      `SELECT
+         id,
+         user_id,
+         [date],
+         [type],
+         stake,
+         odds,
+         0 AS winnings,
+         status,
+         match_label,
+         created_at
+       FROM bets
+       WHERE user_id = $1 AND status IN ('Lost', 'Decremented')
+       ORDER BY created_at DESC`,
       [req.user.sub]
     );
     return res.json({ losses: result.rows });
@@ -108,7 +150,7 @@ const getAdminHistory = async (req, res, next) => {
         b.[type],
         b.stake,
         b.odds,
-        b.winnings,
+        CASE WHEN b.status IN ('Paid Out', 'Incremented') THEN ROUND(b.stake * b.odds, 0) ELSE 0 END AS winnings,
         b.status,
         b.match_label,
         b.created_at
