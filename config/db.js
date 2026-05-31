@@ -60,6 +60,7 @@ const normalizeSql = (text) => text.replace(/\$([0-9]+)/g, '@p$1');
 const mapResult = (result) => ({
   rows: result.recordset || [],
   rowCount: Array.isArray(result.recordset) ? result.recordset.length : 0,
+  rowsAffected: Array.isArray(result.rowsAffected) ? result.rowsAffected : [],
 });
 
 const query = async (text, params = []) => {

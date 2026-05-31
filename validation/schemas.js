@@ -9,6 +9,7 @@ const loginSchema = Joi.object({
     'string.empty': 'Password is required',
     'string.min': 'Password must be at least 8 characters',
   }),
+  adminLogin: Joi.boolean().optional(),
 });
 
 const registerSchema = Joi.object({

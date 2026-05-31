@@ -106,6 +106,11 @@ const login = async (req, res, next) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    if (value.adminLogin && !Boolean(user.is_admin)) {
+      recordLoginDuration(Date.now() - started);
+      return res.status(403).json({ error: 'You are not the admin.' });
+    }
+
     const token = buildToken(user);
     recordLoginDuration(Date.now() - started);
     return res.json({
