@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
 
 dotenv.config();
@@ -19,17 +18,13 @@ const { query } = require('./config/db');
 const app = express();
 const PORT = process.env.PORT || 8000;
 
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+// Ensure correct client IP behind reverse proxies (Render, Fly, Nginx, etc.)
+// so IP-based protections work as expected.
+app.set('trust proxy', 1);
 
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
-app.use(limiter);
 
 // Request log to verify every API hit in terminal
 app.use((req, res, next) => {
@@ -41,7 +36,8 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authLimiter, authRoutes);
+app.use(limiter);
 app.use('/api/bets', betRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/wallet', walletRoutes);

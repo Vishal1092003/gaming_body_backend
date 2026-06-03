@@ -2,6 +2,13 @@ const { query } = require('../config/db');
 const { walletRequestSchema, walletRequestDecisionSchema } = require('../validation/schemas');
 const { sendAdminAlertEmail } = require('../config/mailer');
 
+const withTimeout = (promise, ms) => {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+  ]);
+};
+
 const createWalletRequest = async (req, res, next) => {
   try {
     const { error, value } = walletRequestSchema.validate(req.body, { abortEarly: false });
@@ -16,34 +23,38 @@ const createWalletRequest = async (req, res, next) => {
       [req.user.sub, value.type, value.amount, value.note || null]
     );
 
-    try {
-      await sendAdminAlertEmail({
-        subject: `New ${value.type} request from ${req.user.username}`,
-        text:
-          `A new wallet request has been submitted.\n` +
-          `User ID: ${req.user.sub}\n` +
-          `Username: ${req.user.username}\n` +
-          `Email: ${req.user.email}\n` +
-          `Type: ${value.type}\n` +
-          `Amount: ${value.amount}\n` +
-          `Note: ${value.note || '-'}`,
-        html: `
-          <div style="font-family:Arial,sans-serif;line-height:1.45">
-            <h3>New Wallet Request</h3>
-            <p><b>User ID:</b> ${req.user.sub}</p>
-            <p><b>Username:</b> ${req.user.username}</p>
-            <p><b>Email:</b> ${req.user.email}</p>
-            <p><b>Type:</b> ${value.type}</p>
-            <p><b>Amount:</b> ${value.amount}</p>
-            <p><b>Note:</b> ${value.note || '-'}</p>
-          </div>
-        `,
-      });
-    } catch (mailErr) {
-      console.error('[MAIL] Wallet request notification failed:', mailErr.message);
-    }
+    // Respond immediately; send email notification best-effort in background.
+    res.status(201).json({ message: 'Request submitted to admin', request: result.rows[0] });
 
-    return res.status(201).json({ message: 'Request submitted to admin', request: result.rows[0] });
+    setImmediate(async () => {
+      try {
+        await withTimeout(sendAdminAlertEmail({
+          subject: `New ${value.type} request from ${req.user.username}`,
+          text:
+            `A new wallet request has been submitted.\n` +
+            `User ID: ${req.user.sub}\n` +
+            `Username: ${req.user.username}\n` +
+            `Email: ${req.user.email}\n` +
+            `Type: ${value.type}\n` +
+            `Amount: ${value.amount}\n` +
+            `Note: ${value.note || '-'}`,
+          html: `
+            <div style="font-family:Arial,sans-serif;line-height:1.45">
+              <h3>New Wallet Request</h3>
+              <p><b>User ID:</b> ${req.user.sub}</p>
+              <p><b>Username:</b> ${req.user.username}</p>
+              <p><b>Email:</b> ${req.user.email}</p>
+              <p><b>Type:</b> ${value.type}</p>
+              <p><b>Amount:</b> ${value.amount}</p>
+              <p><b>Note:</b> ${value.note || '-'}</p>
+            </div>
+          `,
+        }), 4000);
+      } catch (mailErr) {
+        console.error('[MAIL] Wallet request notification failed (ignored):', mailErr.message || mailErr);
+      }
+    });
+    return;
   } catch (err) {
     next(err);
   }

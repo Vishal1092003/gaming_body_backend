@@ -27,7 +27,23 @@ const createBet = async (req, res, next) => {
 
 const getHistory = async (req, res, next) => {
   try {
-    const result = await query('SELECT * FROM bets WHERE user_id = $1 ORDER BY created_at DESC', [req.user.sub]);
+    const result = await query(
+      `SELECT
+         id,
+         user_id,
+         [date],
+         [type],
+         stake,
+         odds,
+         CASE WHEN status IN ('Paid Out', 'Incremented') THEN ROUND(stake * odds, 0) ELSE 0 END AS winnings,
+         status,
+         match_label,
+         created_at
+       FROM bets
+       WHERE user_id = $1
+       ORDER BY created_at DESC`,
+      [req.user.sub]
+    );
     return res.json({ history: result.rows });
   } catch (err) {
     next(err);
@@ -37,7 +53,20 @@ const getHistory = async (req, res, next) => {
 const getWins = async (req, res, next) => {
   try {
     const result = await query(
-      "SELECT * FROM bets WHERE user_id = $1 AND status IN ('Paid Out', 'Incremented') ORDER BY created_at DESC",
+      `SELECT
+         id,
+         user_id,
+         [date],
+         [type],
+         stake,
+         odds,
+         ROUND(stake * odds, 0) AS winnings,
+         status,
+         match_label,
+         created_at
+       FROM bets
+       WHERE user_id = $1 AND status IN ('Paid Out', 'Incremented')
+       ORDER BY created_at DESC`,
       [req.user.sub]
     );
     return res.json({ wins: result.rows });
@@ -49,7 +78,20 @@ const getWins = async (req, res, next) => {
 const getLosses = async (req, res, next) => {
   try {
     const result = await query(
-      "SELECT * FROM bets WHERE user_id = $1 AND status IN ('Lost', 'Decremented') ORDER BY created_at DESC",
+      `SELECT
+         id,
+         user_id,
+         [date],
+         [type],
+         stake,
+         odds,
+         0 AS winnings,
+         status,
+         match_label,
+         created_at
+       FROM bets
+       WHERE user_id = $1 AND status IN ('Lost', 'Decremented')
+       ORDER BY created_at DESC`,
       [req.user.sub]
     );
     return res.json({ losses: result.rows });
@@ -82,8 +124,48 @@ const getSummary = async (req, res, next) => {
       netProfit: net_profit,
     });
   } catch (err) {
+    next(err); 
+  }
+};
+
+const getAdminHistory = async (req, res, next) => {
+  try {
+    const rawLimit = Number(req.query?.limit);
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 500) : 200;
+    const search = String(req.query?.search || '').trim();
+
+    const where = search
+      ? `WHERE (LOWER(u.username) LIKE LOWER($1) OR LOWER(u.email) LIKE LOWER($1))`
+      : '';
+    const params = search ? [`%${search}%`] : [];
+
+    const result = await query(
+      `
+      SELECT TOP (${limit})
+        b.id,
+        b.user_id,
+        u.username,
+        u.email,
+        b.[date],
+        b.[type],
+        b.stake,
+        b.odds,
+        CASE WHEN b.status IN ('Paid Out', 'Incremented') THEN ROUND(b.stake * b.odds, 0) ELSE 0 END AS winnings,
+        b.status,
+        b.match_label,
+        b.created_at
+      FROM bets b
+      JOIN users u ON u.id = b.user_id
+      ${where}
+      ORDER BY b.created_at DESC
+      `,
+      params
+    );
+
+    return res.json({ history: result.rows || [] });
+  } catch (err) {
     next(err);
   }
 };
 
-module.exports = { createBet, getHistory, getWins, getLosses, getSummary };
+module.exports = { createBet, getHistory, getWins, getLosses, getSummary, getAdminHistory };

@@ -67,6 +67,14 @@ const buildLiveSnapshot = (fixtures = []) => JSON.stringify(
 
 const startPolling = () => {
   if (polling) return;
+
+  // If key is not configured, don't start polling (avoids noisy logs).
+  if (!SPORTMONKS_KEY || String(SPORTMONKS_KEY).trim() === '') {
+    console.warn('[LivePoller] disabled: SPORTMONKS_API_KEY is not configured');
+    polling = false;
+    return;
+  }
+
   polling = true;
   const run = async () => {
     try {
