@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const dotenv = require('dotenv');
+const rateLimit = require('express-rate-limit');
 
 dotenv.config();
 
@@ -17,6 +18,12 @@ const { query } = require('./config/db');
 
 const app = express();
 const PORT = process.env.PORT || 8000;
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // Ensure correct client IP behind reverse proxies (Render, Fly, Nginx, etc.)
 // so IP-based protections work as expected.
@@ -36,7 +43,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/auth', authRoutes);
 app.use(limiter);
 app.use('/api/bets', betRoutes);
 app.use('/api/admin', adminRoutes);
