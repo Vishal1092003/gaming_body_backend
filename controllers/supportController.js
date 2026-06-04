@@ -149,6 +149,7 @@ const createSupportTicket = async (req, res, next) => {
 
 const listTicketsAdmin = async (req, res, next) => {
   try {
+    const adminId = Number(req.user?.sub);
     const rows = await query(
       `
       SELECT
@@ -165,8 +166,11 @@ const listTicketsAdmin = async (req, res, next) => {
         t.created_at
       FROM support_tickets t
       JOIN users u ON u.id = t.user_id
+      WHERE u.created_by_admin_id = $1
       ORDER BY t.created_at DESC
       `
+      ,
+      [adminId]
     );
     return res.json({ tickets: rows.rows || [] });
   } catch (err) {

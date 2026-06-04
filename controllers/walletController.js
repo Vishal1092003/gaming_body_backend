@@ -78,6 +78,7 @@ const getMyWalletRequests = async (req, res, next) => {
 const listWalletRequests = async (req, res, next) => {
   try {
     const status = String(req.query.status || '').trim();
+    const adminId = Number(req.user?.sub);
     let result;
     if (status) {
       result = await query(
@@ -85,15 +86,19 @@ const listWalletRequests = async (req, res, next) => {
          FROM wallet_requests wr
          JOIN users u ON u.id = wr.user_id
          WHERE wr.status = $1
+           AND u.created_by_admin_id = $2
          ORDER BY wr.created_at DESC`,
-        [status]
+        [status, adminId]
       );
     } else {
       result = await query(
         `SELECT TOP 200 wr.*, u.username, u.email
          FROM wallet_requests wr
          JOIN users u ON u.id = wr.user_id
+         WHERE u.created_by_admin_id = $1
          ORDER BY wr.created_at DESC`
+        ,
+        [adminId]
       );
     }
     return res.json({ requests: result.rows });
@@ -164,9 +169,27 @@ const decideWalletRequest = async (req, res, next) => {
   }
 };
 
+const getMyWalletTransactions = async (req, res, next) => {
+  try {
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 500) : 200;
+    const result = await query(
+      `SELECT TOP (${limit}) id, amount, reason, created_at
+       FROM wallet_transactions
+       WHERE user_id = $1
+       ORDER BY created_at DESC`,
+      [req.user.sub]
+    );
+    return res.json({ transactions: result.rows });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   createWalletRequest,
   getMyWalletRequests,
+  getMyWalletTransactions,
   listWalletRequests,
   decideWalletRequest,
 };

@@ -18,6 +18,112 @@ const { query } = require('./config/db');
 const app = express();
 const PORT = process.env.PORT || 8000;
 
+const ensureDatabaseSchemaAndBootstrap = async () => {
+  await query(`
+    IF OBJECT_ID('users', 'U') IS NULL
+    CREATE TABLE users (
+      id INT IDENTITY(1,1) PRIMARY KEY,
+      username VARCHAR(30) NOT NULL UNIQUE,
+      email VARCHAR(254) NOT NULL UNIQUE,
+      password_hash NVARCHAR(MAX) NOT NULL,
+      balance DECIMAL(12,2) NOT NULL DEFAULT 0,
+      is_admin BIT NOT NULL DEFAULT 0,
+      created_by_admin_id INT NULL,
+      created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+  `);
+  await query(`IF COL_LENGTH('users','balance') IS NULL ALTER TABLE users ADD balance DECIMAL(12,2) NOT NULL DEFAULT 0;`);
+  await query(`IF COL_LENGTH('users','is_admin') IS NULL ALTER TABLE users ADD is_admin BIT NOT NULL DEFAULT 0;`);
+  await query(`IF COL_LENGTH('users','created_by_admin_id') IS NULL ALTER TABLE users ADD created_by_admin_id INT NULL;`);
+  await query(`
+    IF OBJECT_ID('bets', 'U') IS NULL
+    CREATE TABLE bets (
+      id INT IDENTITY(1,1) PRIMARY KEY,
+      user_id INT NOT NULL,
+      [date] DATE NOT NULL,
+      [type] VARCHAR(16) NOT NULL,
+      stake DECIMAL(12,2) NOT NULL,
+      odds DECIMAL(10,2) NOT NULL,
+      winnings DECIMAL(12,2) NOT NULL,
+      status VARCHAR(32) NOT NULL,
+      match_label VARCHAR(128) NOT NULL,
+      created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+  `);
+  await query(`
+    IF OBJECT_ID('token_blacklist', 'U') IS NULL
+    CREATE TABLE token_blacklist (
+      id INT IDENTITY(1,1) PRIMARY KEY,
+      token NVARCHAR(MAX) NOT NULL,
+      expires_at DATETIME2 NOT NULL,
+      blacklisted_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+  `);
+  await query(`
+    IF OBJECT_ID('password_reset_tokens', 'U') IS NULL
+    CREATE TABLE password_reset_tokens (
+      id INT IDENTITY(1,1) PRIMARY KEY,
+      user_id INT NOT NULL,
+      email VARCHAR(254) NOT NULL,
+      code_hash NVARCHAR(MAX) NOT NULL,
+      expires_at DATETIME2 NOT NULL,
+      used_at DATETIME2 NULL,
+      created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+  `);
+  await query(`
+    IF OBJECT_ID('wallet_transactions', 'U') IS NULL
+    CREATE TABLE wallet_transactions (
+      id INT IDENTITY(1,1) PRIMARY KEY,
+      user_id INT NOT NULL,
+      admin_user_id INT NULL,
+      amount DECIMAL(12,2) NOT NULL,
+      reason VARCHAR(160) NOT NULL,
+      created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+  `);
+  await query(`
+    IF OBJECT_ID('wallet_requests', 'U') IS NULL
+    CREATE TABLE wallet_requests (
+      id INT IDENTITY(1,1) PRIMARY KEY,
+      user_id INT NOT NULL,
+      type VARCHAR(16) NOT NULL,
+      amount DECIMAL(12,2) NOT NULL,
+      note VARCHAR(160) NULL,
+      status VARCHAR(16) NOT NULL DEFAULT 'pending',
+      admin_note VARCHAR(160) NULL,
+      decided_by INT NULL,
+      decided_at DATETIME2 NULL,
+      created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+  `);
+  await query(`
+    IF OBJECT_ID('support_tickets', 'U') IS NULL
+    CREATE TABLE support_tickets (
+      id INT IDENTITY(1,1) PRIMARY KEY,
+      user_id INT NOT NULL,
+      issue_type VARCHAR(60) NOT NULL,
+      message NVARCHAR(MAX) NOT NULL,
+      admin_email VARCHAR(254) NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'open',
+      admin_reply NVARCHAR(MAX) NULL,
+      replied_by INT NULL,
+      replied_at DATETIME2 NULL,
+      created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+  `);
+  await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','admin_email') IS NULL ALTER TABLE support_tickets ADD admin_email VARCHAR(254) NULL;`);
+  await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','admin_reply') IS NULL ALTER TABLE support_tickets ADD admin_reply NVARCHAR(MAX) NULL;`);
+  await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','replied_by') IS NULL ALTER TABLE support_tickets ADD replied_by INT NULL;`);
+  await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','replied_at') IS NULL ALTER TABLE support_tickets ADD replied_at DATETIME2 NULL;`);
+
+  console.log(`[HEALTH] Admin signup hash: ${process.env.ADMIN_SIGNUP_CODE_HASH ? 'STORED' : 'NOT SET (admin self-signup disabled)'}`);
+  if (process.env.ADMIN_EMAIL) {
+    await query('UPDATE users SET is_admin = TRUE WHERE lower(email) = lower($1)', [process.env.ADMIN_EMAIL.trim()]);
+    console.log(`[HEALTH] Admin bootstrap email applied: ${process.env.ADMIN_EMAIL}`);
+  }
+};
+
 // Ensure correct client IP behind reverse proxies (Render, Fly, Nginx, etc.)
 // so IP-based protections work as expected.
 app.set('trust proxy', 1);
@@ -116,112 +222,13 @@ const start = async () => {
       'POST /api/support/tickets',
       'GET  /api/support/my-tickets',
     ].forEach((route) => console.log(`  - ${route} [OK]`));
-    await query(`
-      IF OBJECT_ID('users', 'U') IS NULL
-      CREATE TABLE users (
-        id INT IDENTITY(1,1) PRIMARY KEY,
-        username VARCHAR(30) NOT NULL UNIQUE,
-        email VARCHAR(254) NOT NULL UNIQUE,
-        password_hash NVARCHAR(MAX) NOT NULL,
-        balance DECIMAL(12,2) NOT NULL DEFAULT 0,
-        is_admin BIT NOT NULL DEFAULT 0,
-        created_by_admin_id INT NULL,
-        created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-      );
-    `);
-    await query(`IF COL_LENGTH('users','balance') IS NULL ALTER TABLE users ADD balance DECIMAL(12,2) NOT NULL DEFAULT 0;`);
-    await query(`IF COL_LENGTH('users','is_admin') IS NULL ALTER TABLE users ADD is_admin BIT NOT NULL DEFAULT 0;`);
-    await query(`IF COL_LENGTH('users','created_by_admin_id') IS NULL ALTER TABLE users ADD created_by_admin_id INT NULL;`);
-    await query(`
-      IF OBJECT_ID('bets', 'U') IS NULL
-      CREATE TABLE bets (
-        id INT IDENTITY(1,1) PRIMARY KEY,
-        user_id INT NOT NULL,
-        [date] DATE NOT NULL,
-        [type] VARCHAR(16) NOT NULL,
-        stake DECIMAL(12,2) NOT NULL,
-        odds DECIMAL(10,2) NOT NULL,
-        winnings DECIMAL(12,2) NOT NULL,
-        status VARCHAR(32) NOT NULL,
-        match_label VARCHAR(128) NOT NULL,
-        created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-      );
-    `);
-    await query(`
-      IF OBJECT_ID('token_blacklist', 'U') IS NULL
-      CREATE TABLE token_blacklist (
-        id INT IDENTITY(1,1) PRIMARY KEY,
-        token NVARCHAR(MAX) NOT NULL,
-        expires_at DATETIME2 NOT NULL,
-        blacklisted_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-      );
-    `);
-    await query(`
-      IF OBJECT_ID('password_reset_tokens', 'U') IS NULL
-      CREATE TABLE password_reset_tokens (
-        id INT IDENTITY(1,1) PRIMARY KEY,
-        user_id INT NOT NULL,
-        email VARCHAR(254) NOT NULL,
-        code_hash NVARCHAR(MAX) NOT NULL,
-        expires_at DATETIME2 NOT NULL,
-        used_at DATETIME2 NULL,
-        created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-      );
-    `);
-    await query(`
-      IF OBJECT_ID('wallet_transactions', 'U') IS NULL
-      CREATE TABLE wallet_transactions (
-        id INT IDENTITY(1,1) PRIMARY KEY,
-        user_id INT NOT NULL,
-        admin_user_id INT NULL,
-        amount DECIMAL(12,2) NOT NULL,
-        reason VARCHAR(160) NOT NULL,
-        created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-      );
-    `);
-    await query(`
-      IF OBJECT_ID('wallet_requests', 'U') IS NULL
-      CREATE TABLE wallet_requests (
-        id INT IDENTITY(1,1) PRIMARY KEY,
-        user_id INT NOT NULL,
-        type VARCHAR(16) NOT NULL,
-        amount DECIMAL(12,2) NOT NULL,
-        note VARCHAR(160) NULL,
-        status VARCHAR(16) NOT NULL DEFAULT 'pending',
-        admin_note VARCHAR(160) NULL,
-        decided_by INT NULL,
-        decided_at DATETIME2 NULL,
-        created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-      );
-    `);
-    await query(`
-      IF OBJECT_ID('support_tickets', 'U') IS NULL
-      CREATE TABLE support_tickets (
-        id INT IDENTITY(1,1) PRIMARY KEY,
-        user_id INT NOT NULL,
-        issue_type VARCHAR(60) NOT NULL,
-        message NVARCHAR(MAX) NOT NULL,
-        admin_email VARCHAR(254) NULL,
-        status VARCHAR(20) NOT NULL DEFAULT 'open', -- open | answered | closed
-        admin_reply NVARCHAR(MAX) NULL,
-        replied_by INT NULL,
-        replied_at DATETIME2 NULL,
-        created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-      );
-    `);
-    await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','admin_email') IS NULL ALTER TABLE support_tickets ADD admin_email VARCHAR(254) NULL;`);
-    await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','admin_reply') IS NULL ALTER TABLE support_tickets ADD admin_reply NVARCHAR(MAX) NULL;`);
-    await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','replied_by') IS NULL ALTER TABLE support_tickets ADD replied_by INT NULL;`);
-    await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','replied_at') IS NULL ALTER TABLE support_tickets ADD replied_at DATETIME2 NULL;`);
-    console.log(`[HEALTH] Admin signup hash: ${process.env.ADMIN_SIGNUP_CODE_HASH ? 'STORED' : 'NOT SET (admin self-signup disabled)'}`);
-    if (process.env.ADMIN_EMAIL) {
-      await query('UPDATE users SET is_admin = TRUE WHERE lower(email) = lower($1)', [process.env.ADMIN_EMAIL.trim()]);
-      console.log(`[HEALTH] Admin bootstrap email applied: ${process.env.ADMIN_EMAIL}`);
-    }
     app.listen(PORT, () => {
       console.log(`Backend listening on http://localhost:${PORT}`);
       console.log(`Health endpoint: http://localhost:${PORT}/api/health`);
     });
+    ensureDatabaseSchemaAndBootstrap()
+      .then(() => console.log('[HEALTH] Schema/bootstrap complete'))
+      .catch((error) => console.error('[HEALTH] Schema/bootstrap failed:', error.message));
   } catch (error) {
     console.error('Unable to connect to database:', error.message);
     process.exit(1);

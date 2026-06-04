@@ -11,7 +11,8 @@ const {
 } = require('../validation/schemas');
 
 const getJwtSecret = () => process.env.JWT_SECRET || 'change-this-secret';
-const getJwtExpiry = () => process.env.JWT_EXPIRY || '4h';
+const DEFAULT_LOGIN_EXPIRY = process.env.JWT_EXPIRY_DEFAULT || '2d';
+const REMEMBER_ME_EXPIRY = process.env.JWT_EXPIRY_REMEMBER_ME || '30d';
 const getPasswordResetTtlMinutes = () => Number(process.env.PASSWORD_RESET_TTL_MINUTES || 15);
 
 const getAdminSignupCodeHash = async () => {
@@ -27,7 +28,7 @@ const getAdminSignupCodeHash = async () => {
   return result.rowCount > 0 ? String(result.rows[0].value || '') : '';
 };
 
-const buildToken = (user) => {
+const buildToken = (user, expiresIn = DEFAULT_LOGIN_EXPIRY) => {
   return jwt.sign(
     {
       sub: user.id,
@@ -36,7 +37,7 @@ const buildToken = (user) => {
       isAdmin: Boolean(user.is_admin),
     },
     getJwtSecret(),
-    { expiresIn: getJwtExpiry() }
+    { expiresIn }
   );
 };
 
@@ -111,11 +112,12 @@ const login = async (req, res, next) => {
       return res.status(403).json({ error: 'You are not the admin.' });
     }
 
-    const token = buildToken(user);
+    const expiresIn = value.rememberMe ? REMEMBER_ME_EXPIRY : DEFAULT_LOGIN_EXPIRY;
+    const token = buildToken(user, expiresIn);
     recordLoginDuration(Date.now() - started);
     return res.json({
       token,
-      expiresIn: getJwtExpiry(),
+      expiresIn,
       user: {
         id: user.id,
         username: user.username,

@@ -1,6 +1,13 @@
 const { query } = require('../config/db');
 const { betSchema } = require('../validation/schemas');
 
+const normalizeBetDate = (rawDate) => {
+  if (!rawDate) return new Date().toISOString().slice(0, 10);
+  const parsed = new Date(rawDate);
+  if (Number.isNaN(parsed.getTime())) return new Date().toISOString().slice(0, 10);
+  return parsed.toISOString().slice(0, 10);
+};
+
 const createBet = async (req, res, next) => {
   try {
     const { error, value } = betSchema.validate(req.body, { abortEarly: false });
@@ -11,12 +18,13 @@ const createBet = async (req, res, next) => {
     const stake = Number(value.stake);
     const odds = Number(value.odds);
     const winnings = ['Paid Out', 'Incremented'].includes(value.status) ? Math.round(stake * odds) : 0;
+    const betDate = normalizeBetDate(value.date);
 
     const result = await query(
       `INSERT INTO bets (user_id, [date], [type], stake, odds, winnings, status, match_label)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
        SELECT TOP 1 * FROM bets WHERE user_id = $1 ORDER BY id DESC`,
-      [req.user.sub, value.date || new Date().toISOString().slice(0, 10), value.type, stake, odds, winnings, value.status, value.match]
+      [req.user.sub, betDate, value.type, stake, odds, winnings, value.status, value.match]
     );
 
     return res.status(201).json({ message: 'Bet created', bet: result.rows[0] });
@@ -133,11 +141,13 @@ const getAdminHistory = async (req, res, next) => {
     const rawLimit = Number(req.query?.limit);
     const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 500) : 200;
     const search = String(req.query?.search || '').trim();
+    const adminId = Number(req.user?.sub);
 
     const where = search
-      ? `WHERE (LOWER(u.username) LIKE LOWER($1) OR LOWER(u.email) LIKE LOWER($1))`
-      : '';
-    const params = search ? [`%${search}%`] : [];
+      ? `WHERE (LOWER(u.username) LIKE LOWER($1) OR LOWER(u.email) LIKE LOWER($1))
+           AND u.created_by_admin_id = $2`
+      : `WHERE u.created_by_admin_id = $1`;
+    const params = search ? [`%${search}%`, adminId] : [adminId];
 
     const result = await query(
       `
