@@ -12,8 +12,6 @@ const listUsers = async (req, res, next) => {
     const search = String(req.query.search || '').trim();
     const limit = Math.min(Math.max(Number(req.query.limit || 25), 1), 100);
     const adminId = Number(req.user.sub);
-    const managedOnly = String(req.query.managedOnly || '').toLowerCase() === 'true';
-    const canSeeAll = req.user?.isAdmin === true && !managedOnly;
 
     let result;
     if (search) {
@@ -21,17 +19,17 @@ const listUsers = async (req, res, next) => {
         `SELECT TOP (${limit}) id, username, email, balance, is_admin, created_by_admin_id, created_at
          FROM users
          WHERE (LOWER(username) LIKE LOWER($1) OR LOWER(email) LIKE LOWER($1))
-         ${canSeeAll ? '' : 'AND created_by_admin_id = $2'}
+           AND created_by_admin_id = $2
          ORDER BY id DESC`,
-        canSeeAll ? [`%${search}%`] : [`%${search}%`, adminId]
+        [`%${search}%`, adminId]
       );
     } else {
       result = await query(
         `SELECT TOP (${limit}) id, username, email, balance, is_admin, created_by_admin_id, created_at
          FROM users
-         ${canSeeAll ? '' : 'WHERE created_by_admin_id = $1'}
+         WHERE created_by_admin_id = $1
          ORDER BY id DESC`,
-        canSeeAll ? [] : [adminId]
+        [adminId]
       );
     }
 
