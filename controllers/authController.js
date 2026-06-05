@@ -68,6 +68,29 @@ const register = async (req, res, next) => {
       }
     }
 
+    if (!wantsAdmin) {
+      const existingRequest = await query(
+        `SELECT TOP 1 id
+         FROM signup_requests
+         WHERE (LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($2))
+           AND status = 'pending'
+         ORDER BY id DESC`,
+        [value.username, value.email]
+      );
+      if (existingRequest.rowCount > 0) {
+        return res.status(409).json({ error: 'A signup request for this username or email is already pending' });
+      }
+
+      const passwordHash = bcrypt.hashSync(value.password, 12);
+      await query(
+        `INSERT INTO signup_requests (username, email, password_hash, status)
+         VALUES ($1, $2, $3, 'pending')`,
+        [value.username.trim(), value.email.trim().toLowerCase(), passwordHash]
+      );
+
+      return res.status(201).json({ message: 'Signup request sent to admin successfully' });
+    }
+
     const passwordHash = bcrypt.hashSync(value.password, 12);
     await query(
       'INSERT INTO users (username, email, password_hash, is_admin) VALUES ($1, $2, $3, $4)',

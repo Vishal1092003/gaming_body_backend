@@ -147,6 +147,14 @@ const adminCreateUserSchema = Joi.object({
     }),
 });
 
+const signupRequestDecisionSchema = Joi.object({
+  status: Joi.string().valid('approved', 'rejected').required().messages({
+    'any.only': 'Status must be approved or rejected',
+    'any.required': 'Status is required',
+  }),
+  note: Joi.string().trim().max(160).allow('').optional(),
+});
+
 const walletRequestSchema = Joi.object({
   type: Joi.string().valid('deposit', 'withdrawal').required().messages({
     'any.only': 'Type must be deposit or withdrawal',
@@ -184,6 +192,7 @@ module.exports = {
   adminCreditBalanceSchema,
   adminResetUserPasswordSchema,
   adminCreateUserSchema,
+  signupRequestDecisionSchema,
   walletRequestSchema,
   walletRequestDecisionSchema,
   supportTicketSchema,

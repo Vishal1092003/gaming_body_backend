@@ -72,6 +72,22 @@ CREATE TABLE IF NOT EXISTS wallet_requests (
 CREATE INDEX IF NOT EXISTS idx_wallet_requests_user ON wallet_requests(user_id);
 CREATE INDEX IF NOT EXISTS idx_wallet_requests_status ON wallet_requests(status);
 
+CREATE TABLE IF NOT EXISTS signup_requests (
+  id SERIAL PRIMARY KEY,
+  username VARCHAR(30) NOT NULL,
+  email VARCHAR(254) NOT NULL,
+  password_hash TEXT NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
+  admin_note VARCHAR(160),
+  decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  decided_at TIMESTAMPTZ,
+  created_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_signup_requests_status ON signup_requests(status);
+CREATE INDEX IF NOT EXISTS idx_signup_requests_email ON signup_requests(email);
+
 CREATE TABLE IF NOT EXISTS app_config (
   key VARCHAR(64) PRIMARY KEY,
   value TEXT NOT NULL,

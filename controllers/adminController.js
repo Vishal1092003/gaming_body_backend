@@ -5,6 +5,7 @@ const {
   adminCreditBalanceSchema,
   adminResetUserPasswordSchema,
   adminCreateUserSchema,
+  signupRequestDecisionSchema,
 } = require('../validation/schemas');
 
 const listUsers = async (req, res, next) => {
@@ -201,9 +202,165 @@ const createUserByAdmin = async (req, res, next) => {
   }
 };
 
+const listSignupRequests = async (req, res, next) => {
+  try {
+    const status = String(req.query.status || 'pending').trim().toLowerCase();
+    const allowedStatuses = new Set(['pending', 'approved', 'rejected', 'all']);
+    if (!allowedStatuses.has(status)) {
+      return res.status(400).json({ error: 'Invalid status filter' });
+    }
+
+    const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 250);
+    const params = [];
+    let where = '';
+    if (status !== 'all') {
+      params.push(status);
+      where = `WHERE sr.status = $${params.length}`;
+    }
+    params.push(limit);
+
+    const result = await query(
+      `SELECT TOP (${limit})
+          sr.id,
+          sr.username,
+          sr.email,
+          sr.status,
+          sr.admin_note,
+          sr.decided_by,
+          sr.decided_at,
+          sr.created_user_id,
+          sr.created_at,
+          u.username AS handled_by_username,
+          cu.username AS created_user_username
+       FROM signup_requests sr
+       LEFT JOIN users u ON u.id = sr.decided_by
+       LEFT JOIN users cu ON cu.id = sr.created_user_id
+       ${where}
+       ORDER BY
+         CASE WHEN sr.status = 'pending' THEN 0 ELSE 1 END,
+         sr.created_at DESC`,
+      status === 'all' ? [] : [status]
+    );
+
+    return res.json({
+      requests: result.rows.map((row) => ({
+        id: row.id,
+        username: row.username,
+        email: row.email,
+        status: row.status,
+        adminNote: row.admin_note || '',
+        decidedBy: row.decided_by || null,
+        decidedAt: row.decided_at || null,
+        createdUserId: row.created_user_id || null,
+        createdUserUsername: row.created_user_username || null,
+        handledByUsername: row.handled_by_username || null,
+        createdAt: row.created_at,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const decideSignupRequest = async (req, res, next) => {
+  try {
+    const { error, value } = signupRequestDecisionSchema.validate(req.body, { abortEarly: false });
+    if (error) {
+      return res.status(400).json({ error: 'Validation failed', details: error.details.map((d) => d.message) });
+    }
+
+    const requestId = Number(req.params.requestId);
+    const adminId = Number(req.user.sub);
+    if (!Number.isInteger(requestId) || requestId <= 0) {
+      return res.status(400).json({ error: 'Invalid signup request id' });
+    }
+
+    const requestResult = await query(
+      `SELECT TOP 1 id, username, email, password_hash, status
+       FROM signup_requests
+       WHERE id = $1`,
+      [requestId]
+    );
+    if (requestResult.rowCount === 0) {
+      return res.status(404).json({ error: 'Signup request not found' });
+    }
+
+    const request = requestResult.rows[0];
+    if (String(request.status).toLowerCase() !== 'pending') {
+      return res.status(409).json({ error: 'This signup request has already been handled' });
+    }
+
+    if (value.status === 'approved') {
+      const existing = await query(
+        'SELECT TOP 1 id FROM users WHERE lower(username) = lower($1) OR lower(email) = lower($2)',
+        [request.username, request.email]
+      );
+      if (existing.rowCount > 0) {
+        await query(
+          `UPDATE signup_requests
+           SET status = 'rejected',
+               admin_note = $1,
+               decided_by = $2,
+               decided_at = SYSUTCDATETIME()
+           WHERE id = $3 AND status = 'pending'`,
+          ['Username or email already exists on an active user.', adminId, requestId]
+        );
+        return res.status(409).json({ error: 'Username or email already exists on an active user' });
+      }
+
+      const created = await query(
+        `INSERT INTO users (username, email, password_hash, created_by_admin_id)
+         OUTPUT INSERTED.id, INSERTED.username, INSERTED.email, INSERTED.balance, INSERTED.created_by_admin_id, INSERTED.created_at
+         VALUES ($1, $2, $3, $4)`,
+        [String(request.username).trim(), String(request.email).trim().toLowerCase(), request.password_hash, adminId]
+      );
+
+      const user = created.rows[0];
+      await query(
+        `UPDATE signup_requests
+         SET status = 'approved',
+             admin_note = $1,
+             decided_by = $2,
+             decided_at = SYSUTCDATETIME(),
+             created_user_id = $3
+         WHERE id = $4 AND status = 'pending'`,
+        [value.note || 'Approved by admin', adminId, user.id, requestId]
+      );
+
+      return res.json({
+        message: 'Signup request approved and user created successfully',
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          balance: Number(user.balance || 0),
+          createdByAdminId: user.created_by_admin_id,
+          createdAt: user.created_at,
+        },
+      });
+    }
+
+    await query(
+      `UPDATE signup_requests
+       SET status = 'rejected',
+           admin_note = $1,
+           decided_by = $2,
+           decided_at = SYSUTCDATETIME()
+       WHERE id = $3 AND status = 'pending'`,
+      [value.note || 'Rejected by admin', adminId, requestId]
+    );
+
+    return res.json({ message: 'Signup request rejected successfully' });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   listUsers,
   creditUserBalance,
   resetUserPassword,
   createUserByAdmin,
+  listSignupRequests,
+  decideSignupRequest,
 };
