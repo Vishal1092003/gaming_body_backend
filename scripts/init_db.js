@@ -119,6 +119,25 @@ const createTables = async () => {
       created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
     );
   `);
+  await query(`
+    IF OBJECT_ID('signup_requests', 'U') IS NULL
+    CREATE TABLE signup_requests (
+      id INT IDENTITY(1,1) PRIMARY KEY,
+      username VARCHAR(30) NOT NULL,
+      email VARCHAR(254) NOT NULL,
+      password_hash NVARCHAR(MAX) NOT NULL,
+      status VARCHAR(16) NOT NULL DEFAULT 'pending',
+      admin_note VARCHAR(160) NULL,
+      decided_by INT NULL,
+      decided_at DATETIME2 NULL,
+      created_user_id INT NULL,
+      created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+  `);
+  await query(`IF OBJECT_ID('signup_requests', 'U') IS NOT NULL AND COL_LENGTH('signup_requests','admin_note') IS NULL ALTER TABLE signup_requests ADD admin_note VARCHAR(160) NULL;`);
+  await query(`IF OBJECT_ID('signup_requests', 'U') IS NOT NULL AND COL_LENGTH('signup_requests','decided_by') IS NULL ALTER TABLE signup_requests ADD decided_by INT NULL;`);
+  await query(`IF OBJECT_ID('signup_requests', 'U') IS NOT NULL AND COL_LENGTH('signup_requests','decided_at') IS NULL ALTER TABLE signup_requests ADD decided_at DATETIME2 NULL;`);
+  await query(`IF OBJECT_ID('signup_requests', 'U') IS NOT NULL AND COL_LENGTH('signup_requests','created_user_id') IS NULL ALTER TABLE signup_requests ADD created_user_id INT NULL;`);
   await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','admin_email') IS NULL ALTER TABLE support_tickets ADD admin_email VARCHAR(254) NULL;`);
   await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','admin_reply') IS NULL ALTER TABLE support_tickets ADD admin_reply NVARCHAR(MAX) NULL;`);
   await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','replied_by') IS NULL ALTER TABLE support_tickets ADD replied_by INT NULL;`);

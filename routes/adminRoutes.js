@@ -6,6 +6,8 @@ const {
   creditUserBalance,
   resetUserPassword,
   createUserByAdmin,
+  listSignupRequests,
+  decideSignupRequest,
 } = require('../controllers/adminController');
 
 const router = express.Router();
@@ -15,5 +17,7 @@ router.get('/users', listUsers);
 router.post('/users', createUserByAdmin);
 router.post('/users/:userId/credit', creditUserBalance);
 router.post('/users/:userId/reset-password', resetUserPassword);
+router.get('/signup-requests', listSignupRequests);
+router.post('/signup-requests/:requestId/decide', decideSignupRequest);
 
 module.exports = router;
