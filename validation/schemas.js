@@ -65,6 +65,9 @@ const betSchema = Joi.object({
     'string.min': 'Match label must be at least 3 characters',
   }),
   predictedTeam: Joi.string().trim().min(2).max(64).optional(),
+  predictedTeamId: Joi.number().integer().positive().optional(),
+  fixtureId: Joi.alternatives().try(Joi.string().trim().max(40), Joi.number().integer().positive()).optional(),
+  clientRef: Joi.string().trim().min(8).max(120).optional(),
   date: Joi.string().optional(),
 });
 

@@ -19,11 +19,17 @@ CREATE TABLE IF NOT EXISTS bets (
   winnings NUMERIC(12,2) NOT NULL,
   status VARCHAR(32) NOT NULL,
   match_label VARCHAR(128) NOT NULL,
+  fixture_id VARCHAR(40),
+  predicted_team VARCHAR(64),
+  predicted_team_id INTEGER,
+  client_ref VARCHAR(120),
+  settled_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_bets_user ON bets(user_id);
 CREATE INDEX IF NOT EXISTS idx_bets_status ON bets(status);
+CREATE INDEX IF NOT EXISTS idx_bets_fixture_status ON bets(fixture_id, status);
 
 CREATE TABLE IF NOT EXISTS token_blacklist (
   id SERIAL PRIMARY KEY,
