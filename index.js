@@ -54,9 +54,19 @@ const ensureDatabaseSchemaAndBootstrap = async () => {
       winnings DECIMAL(12,2) NOT NULL,
       status VARCHAR(32) NOT NULL,
       match_label VARCHAR(128) NOT NULL,
+      fixture_id VARCHAR(40) NULL,
+      predicted_team VARCHAR(64) NULL,
+      predicted_team_id INT NULL,
+      client_ref VARCHAR(120) NULL,
+      settled_at DATETIME2 NULL,
       created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
     );
   `);
+  await query(`IF OBJECT_ID('bets', 'U') IS NOT NULL AND COL_LENGTH('bets','fixture_id') IS NULL ALTER TABLE bets ADD fixture_id VARCHAR(40) NULL;`);
+  await query(`IF OBJECT_ID('bets', 'U') IS NOT NULL AND COL_LENGTH('bets','predicted_team') IS NULL ALTER TABLE bets ADD predicted_team VARCHAR(64) NULL;`);
+  await query(`IF OBJECT_ID('bets', 'U') IS NOT NULL AND COL_LENGTH('bets','predicted_team_id') IS NULL ALTER TABLE bets ADD predicted_team_id INT NULL;`);
+  await query(`IF OBJECT_ID('bets', 'U') IS NOT NULL AND COL_LENGTH('bets','client_ref') IS NULL ALTER TABLE bets ADD client_ref VARCHAR(120) NULL;`);
+  await query(`IF OBJECT_ID('bets', 'U') IS NOT NULL AND COL_LENGTH('bets','settled_at') IS NULL ALTER TABLE bets ADD settled_at DATETIME2 NULL;`);
   await query(`
     IF OBJECT_ID('token_blacklist', 'U') IS NULL
     CREATE TABLE token_blacklist (

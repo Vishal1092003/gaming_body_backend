@@ -1,5 +1,166 @@
+const axios = require('axios');
 const { query } = require('../config/db');
 const { betSchema } = require('../validation/schemas');
+
+const SPORTMONKS_BASE =
+  process.env.SPORTMONKS_BASE_URL ||
+  process.env.EXPO_PUBLIC_SPORTMONKS_BASE_URL ||
+  'https://cricket.sportmonks.com/api/v2.0';
+const SPORTMONKS_KEY =
+  process.env.SPORTMONKS_API_KEY ||
+  process.env.EXPO_PUBLIC_SPORTMONKS_API_KEY ||
+  '';
+
+const fixtureClient = axios.create({ baseURL: SPORTMONKS_BASE, timeout: 15000 });
+const fixtureCache = new Map();
+const FIXTURE_CACHE_TTL_MS = 60 * 1000;
+
+const normalizeText = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+
+const endedFixtureStatuses = new Set([
+  'finished',
+  'fin',
+  'completed',
+  'abandoned',
+  'no result',
+  'cancelled',
+  'canceled',
+  'stumps',
+]);
+
+const withToken = (params = {}) => ({ api_token: SPORTMONKS_KEY, ...params });
+
+const canSyncFixtures = () => String(SPORTMONKS_KEY || '').trim() !== '';
+
+const readWinnerName = (fixture) => {
+  const winnerId = fixture?.winner_team_id;
+  const local = fixture?.localteam?.data || fixture?.localteam || null;
+  const visitor = fixture?.visitorteam?.data || fixture?.visitorteam || null;
+  if (winnerId != null) {
+    if (String(local?.id) === String(winnerId)) return local?.name || null;
+    if (String(visitor?.id) === String(winnerId)) return visitor?.name || null;
+  }
+  const note = String(fixture?.note || fixture?.status || '').trim();
+  const localName = String(local?.name || '').trim();
+  const visitorName = String(visitor?.name || '').trim();
+  if (localName && note.toLowerCase().includes(localName.toLowerCase()) && note.toLowerCase().includes('won')) return localName;
+  if (visitorName && note.toLowerCase().includes(visitorName.toLowerCase()) && note.toLowerCase().includes('won')) return visitorName;
+  return null;
+};
+
+const isFixtureFinished = (fixture) => {
+  const status = normalizeText(fixture?.status || fixture?.note || '');
+  return endedFixtureStatuses.has(status) || endedFixtureStatuses.has(normalizeText(fixture?.status || ''));
+};
+
+const fetchFixture = async (fixtureId) => {
+  const id = String(fixtureId || '').trim();
+  if (!id || !canSyncFixtures()) return null;
+
+  const cached = fixtureCache.get(id);
+  if (cached && Date.now() - cached.ts < FIXTURE_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  const res = await fixtureClient.get(`/fixtures/${id}`, {
+    params: withToken({ include: 'localteam,visitorteam,league,runs,venue' }),
+  });
+  const fixture = res?.data?.data || null;
+  fixtureCache.set(id, { ts: Date.now(), data: fixture });
+  return fixture;
+};
+
+const resolveSettledStatus = (bet, fixture) => {
+  if (!isFixtureFinished(fixture)) return null;
+  if (fixture?.draw_noresult === true) return null;
+
+  const winnerId = fixture?.winner_team_id;
+  const winnerName = normalizeText(readWinnerName(fixture));
+  const predictedTeamId = Number(bet?.predicted_team_id || 0);
+  const predictedName = normalizeText(bet?.predicted_team);
+
+  if (winnerId != null && predictedTeamId > 0) {
+    return String(winnerId) === String(predictedTeamId) ? 'Paid Out' : 'Lost';
+  }
+  if (winnerName && predictedName) {
+    return winnerName === predictedName ? 'Paid Out' : 'Lost';
+  }
+  return null;
+};
+
+const syncPendingRows = async (rows = []) => {
+  if (!Array.isArray(rows) || rows.length === 0 || !canSyncFixtures()) return 0;
+
+  const pending = rows.filter((row) => row?.fixture_id && String(row?.status || '').toLowerCase() === 'pending');
+  if (pending.length === 0) return 0;
+
+  const uniqueFixtureIds = Array.from(new Set(pending.map((row) => String(row.fixture_id))));
+  const fixtures = new Map();
+
+  await Promise.all(
+    uniqueFixtureIds.map(async (fixtureId) => {
+      try {
+        const fixture = await fetchFixture(fixtureId);
+        if (fixture) fixtures.set(String(fixtureId), fixture);
+      } catch (err) {
+        console.warn('[bet-sync] fixture fetch failed:', fixtureId, err?.message || err);
+      }
+    })
+  );
+
+  let updates = 0;
+  for (const row of pending) {
+    const fixture = fixtures.get(String(row.fixture_id));
+    if (!fixture) continue;
+    const nextStatus = resolveSettledStatus(row, fixture);
+    if (!nextStatus || nextStatus === row.status) continue;
+
+    const winnings = nextStatus === 'Paid Out' ? Math.round(Number(row.stake || 0) * Number(row.odds || 0)) : 0;
+    await query(
+      `UPDATE bets
+          SET status = $1,
+              winnings = $2,
+              settled_at = SYSUTCDATETIME()
+        WHERE id = $3
+          AND status = 'Pending'`,
+      [nextStatus, winnings, row.id]
+    );
+    updates += 1;
+  }
+
+  return updates;
+};
+
+const syncPendingBetsForUser = async (userId) => {
+  if (!userId || !canSyncFixtures()) return 0;
+  const pending = await query(
+    `SELECT id, fixture_id, status, stake, odds, predicted_team, predicted_team_id
+       FROM bets
+      WHERE user_id = $1
+        AND status = 'Pending'
+        AND fixture_id IS NOT NULL`,
+    [userId]
+  );
+  return syncPendingRows(pending.rows);
+};
+
+const syncPendingBetsForAdmin = async (adminId) => {
+  if (!adminId || !canSyncFixtures()) return 0;
+  const pending = await query(
+    `SELECT b.id, b.fixture_id, b.status, b.stake, b.odds, b.predicted_team, b.predicted_team_id
+       FROM bets b
+       JOIN users u ON u.id = b.user_id
+      WHERE u.created_by_admin_id = $1
+        AND b.status = 'Pending'
+        AND b.fixture_id IS NOT NULL`,
+    [adminId]
+  );
+  return syncPendingRows(pending.rows);
+};
 
 const normalizeBetDate = (rawDate) => {
   if (!rawDate) return new Date().toISOString().slice(0, 10);
@@ -21,10 +182,23 @@ const createBet = async (req, res, next) => {
     const betDate = normalizeBetDate(value.date);
 
     const result = await query(
-      `INSERT INTO bets (user_id, [date], [type], stake, odds, winnings, status, match_label)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+      `INSERT INTO bets (user_id, [date], [type], stake, odds, winnings, status, match_label, fixture_id, predicted_team, predicted_team_id, client_ref)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
        SELECT TOP 1 * FROM bets WHERE user_id = $1 ORDER BY id DESC`,
-      [req.user.sub, betDate, value.type, stake, odds, winnings, value.status, value.match]
+      [
+        req.user.sub,
+        betDate,
+        value.type,
+        stake,
+        odds,
+        winnings,
+        value.status,
+        value.match,
+        value.fixtureId != null ? String(value.fixtureId) : null,
+        value.predictedTeam || null,
+        value.predictedTeamId || null,
+        value.clientRef || null,
+      ]
     );
 
     return res.status(201).json({ message: 'Bet created', bet: result.rows[0] });
@@ -35,6 +209,7 @@ const createBet = async (req, res, next) => {
 
 const getHistory = async (req, res, next) => {
   try {
+    await syncPendingBetsForUser(req.user.sub);
     const result = await query(
       `SELECT
          id,
@@ -46,6 +221,11 @@ const getHistory = async (req, res, next) => {
          CASE WHEN status IN ('Paid Out', 'Incremented') THEN ROUND(stake * odds, 0) ELSE 0 END AS winnings,
          status,
          match_label,
+         fixture_id,
+         predicted_team,
+         predicted_team_id,
+         client_ref,
+         settled_at,
          created_at
        FROM bets
        WHERE user_id = $1
@@ -60,6 +240,7 @@ const getHistory = async (req, res, next) => {
 
 const getWins = async (req, res, next) => {
   try {
+    await syncPendingBetsForUser(req.user.sub);
     const result = await query(
       `SELECT
          id,
@@ -71,6 +252,11 @@ const getWins = async (req, res, next) => {
          ROUND(stake * odds, 0) AS winnings,
          status,
          match_label,
+         fixture_id,
+         predicted_team,
+         predicted_team_id,
+         client_ref,
+         settled_at,
          created_at
        FROM bets
        WHERE user_id = $1 AND status IN ('Paid Out', 'Incremented')
@@ -85,6 +271,7 @@ const getWins = async (req, res, next) => {
 
 const getLosses = async (req, res, next) => {
   try {
+    await syncPendingBetsForUser(req.user.sub);
     const result = await query(
       `SELECT
          id,
@@ -96,6 +283,11 @@ const getLosses = async (req, res, next) => {
          0 AS winnings,
          status,
          match_label,
+         fixture_id,
+         predicted_team,
+         predicted_team_id,
+         client_ref,
+         settled_at,
          created_at
        FROM bets
        WHERE user_id = $1 AND status IN ('Lost', 'Decremented')
@@ -110,6 +302,7 @@ const getLosses = async (req, res, next) => {
 
 const getSummary = async (req, res, next) => {
   try {
+    await syncPendingBetsForUser(req.user.sub);
     const summary = await query(
       `SELECT
          COUNT(*) AS total_bets,
@@ -142,35 +335,66 @@ const getAdminHistory = async (req, res, next) => {
     const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 500) : 200;
     const search = String(req.query?.search || '').trim();
     const adminId = Number(req.user?.sub);
+    await syncPendingBetsForAdmin(adminId);
 
-    const where = search
-      ? `WHERE (LOWER(u.username) LIKE LOWER($1) OR LOWER(u.email) LIKE LOWER($1))
-           AND u.created_by_admin_id = $2`
-      : `WHERE u.created_by_admin_id = $1`;
-    const params = search ? [`%${search}%`, adminId] : [adminId];
+    const runAdminHistoryQuery = async ({ includeUnassigned = false } = {}) => {
+      const params = [];
+      let where = '';
+      if (search) {
+        params.push(`%${search}%`);
+        params.push(adminId);
+        if (includeUnassigned) {
+          where = `WHERE (LOWER(u.username) LIKE LOWER($1) OR LOWER(u.email) LIKE LOWER($1))
+                     AND (u.created_by_admin_id = $2 OR (u.created_by_admin_id IS NULL AND ISNULL(u.is_admin, 0) = 0))`;
+        } else {
+          where = `WHERE (LOWER(u.username) LIKE LOWER($1) OR LOWER(u.email) LIKE LOWER($1))
+                     AND u.created_by_admin_id = $2`;
+        }
+      } else if (includeUnassigned) {
+        params.push(adminId);
+        where = `WHERE (u.created_by_admin_id = $1 OR (u.created_by_admin_id IS NULL AND ISNULL(u.is_admin, 0) = 0))`;
+      } else {
+        params.push(adminId);
+        where = `WHERE u.created_by_admin_id = $1`;
+      }
 
-    const result = await query(
-      `
-      SELECT TOP (${limit})
-        b.id,
-        b.user_id,
-        u.username,
-        u.email,
-        b.[date],
-        b.[type],
-        b.stake,
-        b.odds,
-        CASE WHEN b.status IN ('Paid Out', 'Incremented') THEN ROUND(b.stake * b.odds, 0) ELSE 0 END AS winnings,
-        b.status,
-        b.match_label,
-        b.created_at
-      FROM bets b
-      JOIN users u ON u.id = b.user_id
-      ${where}
-      ORDER BY b.created_at DESC
-      `,
-      params
-    );
+      return query(
+        `
+        SELECT TOP (${limit})
+          b.id,
+          b.user_id,
+          u.username,
+          u.email,
+          b.[date],
+          b.[type],
+          b.stake,
+          b.odds,
+          CASE WHEN b.status IN ('Paid Out', 'Incremented') THEN ROUND(b.stake * b.odds, 0) ELSE 0 END AS winnings,
+          b.status,
+          b.match_label,
+          b.fixture_id,
+          b.predicted_team,
+          b.predicted_team_id,
+          b.client_ref,
+          b.settled_at,
+          b.created_at
+        FROM bets b
+        JOIN users u ON u.id = b.user_id
+        ${where}
+        ORDER BY b.created_at DESC
+        `,
+        params
+      );
+    };
+
+    let result = await runAdminHistoryQuery({ includeUnassigned: false });
+    if ((result.rows || []).length === 0) {
+      const adminCountRes = await query(`SELECT COUNT(*) AS count FROM users WHERE ISNULL(is_admin, 0) = 1`);
+      const adminCount = Number(adminCountRes?.rows?.[0]?.count || 0);
+      if (adminCount <= 1) {
+        result = await runAdminHistoryQuery({ includeUnassigned: true });
+      }
+    }
 
     return res.json({ history: result.rows || [] });
   } catch (err) {
