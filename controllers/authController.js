@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { query } = require('../config/db');
 const { sendResetCodeEmail } = require('../config/mailer');
+const { getSetting, getNumberSetting } = require('../settings');
 const {
   loginSchema,
   registerSchema,
@@ -10,22 +11,19 @@ const {
   resetPasswordSchema,
 } = require('../validation/schemas');
 
-const getJwtSecret = () => process.env.JWT_SECRET || 'change-this-secret';
-const DEFAULT_LOGIN_EXPIRY = process.env.JWT_EXPIRY_DEFAULT || '2d';
-const REMEMBER_ME_EXPIRY = process.env.JWT_EXPIRY_REMEMBER_ME || '30d';
-const getPasswordResetTtlMinutes = () => Number(process.env.PASSWORD_RESET_TTL_MINUTES || 15);
+const getJwtSecret = () => getSetting('JWT_SECRET');
+const DEFAULT_LOGIN_EXPIRY = getSetting('JWT_EXPIRY_DEFAULT', '2d');
+const REMEMBER_ME_EXPIRY = getSetting('JWT_EXPIRY_REMEMBER_ME', '30d');
+const getPasswordResetTtlMinutes = () => getNumberSetting('PASSWORD_RESET_TTL_MINUTES', 15);
 
 const getAdminSignupCodeHash = async () => {
-  if (process.env.ADMIN_SIGNUP_CODE_HASH) {
-    return String(process.env.ADMIN_SIGNUP_CODE_HASH);
+  if (getSetting('ADMIN_SIGNUP_CODE_HASH')) {
+    return String(getSetting('ADMIN_SIGNUP_CODE_HASH'));
   }
-  const result = await query(
-    `SELECT TOP 1 value
-     FROM app_config
-     WHERE key = 'ADMIN_SIGNUP_CODE_HASH'
-     ORDER BY updated_at DESC`
-  );
-  return result.rowCount > 0 ? String(result.rows[0].value || '') : '';
+  const adminSignupCode = getSetting('ADMIN_SIGNUP_CODE');
+  return adminSignupCode
+    ? crypto.createHash('sha256').update(String(adminSignupCode)).digest('hex')
+    : '';
 };
 
 const buildToken = (user, expiresIn = DEFAULT_LOGIN_EXPIRY) => {

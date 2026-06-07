@@ -2,6 +2,14 @@
 
 Node.js + Express backend for Gaming Body.
 
+Container build, Jenkins pull request pipeline, registry, and Kubernetes
+staging setup are documented in [CI_CD_DEPLOYMENT.md](CI_CD_DEPLOYMENT.md).
+
+Runtime secrets are loaded by `settings.js` from Azure Key Vault before the
+application imports database, mail, authentication, or provider modules.
+Non-empty environment or `.env` values take priority; Key Vault is used only
+for settings that are missing locally.
+
 ## Deployed Backend URL
 
 `https://gaming-body-backend-s0bz.onrender.com`
@@ -42,6 +50,12 @@ Production start:
 
 ```bash
 npm start
+```
+
+Initialize or repair the Azure SQL schema:
+
+```bash
+npm run db:init
 ```
 
 ## Environment Variables

@@ -1,9 +1,7 @@
 const sql = require('mssql');
-const dotenv = require('dotenv');
+const { getSetting } = require('../settings');
 
-dotenv.config();
-
-const databaseUrl = process.env.DATABASE_URL;
+const databaseUrl = getSetting('DATABASE_URL');
 if (!databaseUrl) {
   throw new Error('DATABASE_URL is required for MSSQL connection');
 }
