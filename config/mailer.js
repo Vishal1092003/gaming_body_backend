@@ -1,12 +1,13 @@
 const nodemailer = require('nodemailer');
+const { getSetting, getNumberSetting, getBooleanSetting } = require('../settings');
 
 const getMailerConfig = () => {
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || 587);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const secure = String(process.env.SMTP_SECURE || 'false').toLowerCase() === 'true';
-  const from = process.env.MAIL_FROM || user;
+  const host = getSetting('SMTP_HOST');
+  const port = getNumberSetting('SMTP_PORT', 587);
+  const user = getSetting('SMTP_USER');
+  const pass = getSetting('SMTP_PASS');
+  const secure = getBooleanSetting('SMTP_SECURE');
+  const from = getSetting('MAIL_FROM') || user;
 
   if (!host || !user || !pass || !from) {
     return null;
@@ -65,7 +66,7 @@ const sendAdminAlertEmail = async ({ to, subject, text, html }) => {
     return false;
   }
 
-  const adminRecipient = to || process.env.ADMIN_EMAIL || process.env.SMTP_USER;
+  const adminRecipient = to || getSetting('ADMIN_EMAIL') || getSetting('SMTP_USER');
   if (!adminRecipient) {
     console.warn('[MAIL] ADMIN_EMAIL/SMTP_USER is missing. Skipping admin alert email send.');
     return false;

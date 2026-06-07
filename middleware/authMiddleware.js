@@ -1,7 +1,8 @@
 const jwt = require('jsonwebtoken');
 const { query } = require('../config/db');
+const { getSetting } = require('../settings');
 
-const getJwtSecret = () => process.env.JWT_SECRET || 'change-this-secret';
+const getJwtSecret = () => getSetting('JWT_SECRET');
 
 const authenticate = async (req, res, next) => {
   const authHeader = req.headers.authorization;

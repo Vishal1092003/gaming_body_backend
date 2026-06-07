@@ -1,6 +1,7 @@
 const { query } = require('../config/db');
 const { sendAdminAlertEmail } = require('../config/mailer');
 const { supportTicketSchema } = require('../validation/schemas');
+const { getSetting } = require('../settings');
 
 const USER_ISSUES = [
   'Deposit pending or failed',
@@ -34,7 +35,7 @@ const resolveAdminRecipient = async (userId) => {
   );
   const ownerEmail = ownerResult.rows?.[0]?.email;
   if (ownerEmail) return ownerEmail;
-  return process.env.ADMIN_EMAIL || process.env.SMTP_USER || null;
+  return getSetting('ADMIN_EMAIL') || getSetting('SMTP_USER') || null;
 };
 
 const getSupportContext = async (req, res, next) => {

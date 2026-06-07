@@ -1,20 +1,15 @@
 const axios = require('axios');
 const EventEmitter = require('events');
 const { recordLiveRefreshDuration } = require('./metrics');
+const { getSetting, getNumberSetting } = require('../settings');
 
-const SPORTMONKS_BASE =
-  process.env.SPORTMONKS_BASE_URL ||
-  process.env.EXPO_PUBLIC_SPORTMONKS_BASE_URL ||
-  'https://cricket.sportmonks.com/api/v2.0';
-const SPORTMONKS_KEY =
-  process.env.SPORTMONKS_API_KEY ||
-  process.env.EXPO_PUBLIC_SPORTMONKS_API_KEY ||
-  '';
+const SPORTMONKS_BASE = getSetting('SPORTMONKS_BASE_URL');
+const SPORTMONKS_KEY = getSetting('SPORTMONKS_API_KEY', '');
 
-const PAGE_SIZE = Number(process.env.SPORTMONKS_PAGE_SIZE || 25);
-const POLL_INTERVAL_MS = Number(process.env.LIVE_POLL_INTERVAL_MS || 15000);
-const LIVE_CACHE_TTL = Number(process.env.LIVE_CACHE_TTL_MS || 30000); // short cache for live
-const SCHEDULE_CACHE_TTL = Number(process.env.SCHEDULE_CACHE_TTL_MS || 1500000); // default 25min for scheduled
+const PAGE_SIZE = getNumberSetting('SPORTMONKS_PAGE_SIZE', 25);
+const POLL_INTERVAL_MS = getNumberSetting('LIVE_POLL_INTERVAL_MS', 15000);
+const LIVE_CACHE_TTL = getNumberSetting('LIVE_CACHE_TTL_MS', 30000);
+const SCHEDULE_CACHE_TTL = getNumberSetting('SCHEDULE_CACHE_TTL_MS', 1500000);
 
 const emitter = new EventEmitter();
 emitter.setMaxListeners(1000);
