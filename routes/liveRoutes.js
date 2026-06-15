@@ -1,10 +1,52 @@
 const express = require('express');
+const axios = require('axios');
 const router = express.Router();
 const { emitter, startPolling, getLiveCache, getScheduleCache, getOrRefreshScheduleCache } = require('../services/livePoller');
 const { getMetrics } = require('../services/metrics');
 
+const API_CRICKET_URL = 'https://apiv2.api-cricket.com/cricket';
+const API_CRICKET_METHODS = new Set([
+  'get_events',
+  'get_leagues',
+  'get_odds',
+]);
+const apiCricketClient = axios.create({
+  baseURL: API_CRICKET_URL,
+  timeout: Number(process.env.API_CRICKET_TIMEOUT_MS || 25000),
+});
+
 // Ensure poller started
 startPolling();
+
+router.get('/cricket', async (req, res) => {
+  const method = String(req.query.method || '').trim();
+  if (!API_CRICKET_METHODS.has(method)) {
+    return res.status(400).json({ error: 'Unsupported cricket API method' });
+  }
+
+  const apiKey =
+    process.env.API_CRICKET_KEY ||
+    process.env.EXPO_PUBLIC_API_CRICKET_KEY ||
+    String(req.query.APIkey || '').trim();
+
+  if (!apiKey) {
+    return res.status(503).json({ error: 'API Cricket key is not configured' });
+  }
+
+  const params = { ...req.query, method, APIkey: apiKey };
+
+  try {
+    const response = await apiCricketClient.get('', { params });
+    res.setHeader('Cache-Control', method === 'get_events' ? 'public, max-age=30' : 'public, max-age=300');
+    return res.status(response.status).json(response.data);
+  } catch (error) {
+    const status = Number(error?.response?.status || 502);
+    return res.status(status >= 400 && status < 600 ? status : 502).json({
+      error: 'Unable to load cricket data',
+      detail: error?.response?.data?.message || error.message,
+    });
+  }
+});
 
 // Simple GET endpoint to return current live matches (cached)
 router.get('/live-scores', (req, res) => {

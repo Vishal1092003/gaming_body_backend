@@ -256,6 +256,7 @@ const start = async () => {
       'POST /api/admin/signup-requests/:requestId/decide',
       'GET  /api/health',
       'GET  /api/live-scores',
+      'GET  /api/cricket',
       'GET  /api/live-scores/stream',
       'GET  /api/scheduled-scores',
       'GET  /api/metrics',
