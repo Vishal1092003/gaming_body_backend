@@ -2,8 +2,8 @@ const Joi = require('joi');
 
 const loginSchema = Joi.object({
   identifier: Joi.string().trim().min(3).max(254).required().messages({
-    'string.empty': 'Username or email is required',
-    'string.min': 'Username or email must be at least 3 characters',
+    'string.empty': 'Username, email, or user ID is required',
+    'string.min': 'Username, email, or user ID must be at least 3 characters',
   }),
   password: Joi.string().min(8).max(128).required().messages({
     'string.empty': 'Password is required',

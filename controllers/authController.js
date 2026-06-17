@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { query } = require('../config/db');
 const { sendResetCodeEmail } = require('../config/mailer');
 const { getSetting, getNumberSetting } = require('../settings');
+const { ensureUserCodeForUser, formatUserCode, generateUserCode } = require('../utils/userCode');
 const {
   loginSchema,
   registerSchema,
@@ -30,6 +31,7 @@ const buildToken = (user, expiresIn = DEFAULT_LOGIN_EXPIRY) => {
   return jwt.sign(
     {
       sub: user.id,
+      userCode: formatUserCode(user.user_code),
       username: user.username,
       email: user.email,
       isAdmin: Boolean(user.is_admin),
@@ -90,9 +92,10 @@ const register = async (req, res, next) => {
     }
 
     const passwordHash = bcrypt.hashSync(value.password, 12);
+    const userCode = await generateUserCode();
     await query(
-      'INSERT INTO users (username, email, password_hash, is_admin) VALUES ($1, $2, $3, $4)',
-      [value.username.trim(), value.email.trim().toLowerCase(), passwordHash, wantsAdmin]
+      'INSERT INTO users (username, email, password_hash, user_code, is_admin) VALUES ($1, $2, $3, $4, $5)',
+      [value.username.trim(), value.email.trim().toLowerCase(), passwordHash, userCode, wantsAdmin]
     );
 
     return res.status(201).json({ message: 'User registered successfully' });
@@ -112,7 +115,11 @@ const login = async (req, res, next) => {
     }
 
     const userResult = await query(
-      'SELECT id, username, email, password_hash, is_admin, balance FROM users WHERE lower(username) = lower($1) OR lower(email) = lower($1)',
+      `SELECT id, username, email, password_hash, user_code, is_admin, balance
+       FROM users
+       WHERE lower(username) = lower($1)
+          OR lower(email) = lower($1)
+          OR CONVERT(VARCHAR(6), user_code) = $1`,
       [value.identifier.trim()]
     );
 
@@ -122,6 +129,8 @@ const login = async (req, res, next) => {
     }
 
     const user = userResult.rows[0];
+    const userCode = await ensureUserCodeForUser(user.id);
+    user.user_code = Number(userCode);
     const valid = bcrypt.compareSync(value.password, user.password_hash);
     if (!valid) {
       recordLoginDuration(Date.now() - started);
@@ -143,6 +152,8 @@ const login = async (req, res, next) => {
       expiresIn,
       user: {
         id: user.id,
+        userId: userCode,
+        userCode,
         username: user.username,
         email: user.email,
         isAdmin: Boolean(user.is_admin),

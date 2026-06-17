@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const { query } = require('../config/db');
 const { sendAdminAlertEmail } = require('../config/mailer');
+const { formatUserCode, generateUserCode } = require('../utils/userCode');
 const {
   adminCreditBalanceSchema,
   adminResetUserPasswordSchema,
@@ -17,16 +18,16 @@ const listUsers = async (req, res, next) => {
     let result;
     if (search) {
       result = await query(
-        `SELECT TOP (${limit}) id, username, email, balance, is_admin, created_by_admin_id, created_at
+        `SELECT TOP (${limit}) id, username, email, user_code, balance, is_admin, created_by_admin_id, created_at
          FROM users
-         WHERE (LOWER(username) LIKE LOWER($1) OR LOWER(email) LIKE LOWER($1))
+         WHERE (LOWER(username) LIKE LOWER($1) OR LOWER(email) LIKE LOWER($1) OR CONVERT(VARCHAR(6), user_code) LIKE $1)
            AND created_by_admin_id = $2
          ORDER BY id DESC`,
         [`%${search}%`, adminId]
       );
     } else {
       result = await query(
-        `SELECT TOP (${limit}) id, username, email, balance, is_admin, created_by_admin_id, created_at
+        `SELECT TOP (${limit}) id, username, email, user_code, balance, is_admin, created_by_admin_id, created_at
          FROM users
          WHERE created_by_admin_id = $1
          ORDER BY id DESC`,
@@ -37,6 +38,8 @@ const listUsers = async (req, res, next) => {
     return res.json({
       users: result.rows.map((u) => ({
         id: u.id,
+        userId: formatUserCode(u.user_code),
+        userCode: formatUserCode(u.user_code),
         username: u.username,
         email: u.email,
         balance: Number(u.balance || 0),
@@ -75,7 +78,7 @@ const creditUserBalance = async (req, res, next) => {
       `UPDATE users
        SET balance = balance + $1
        WHERE id = $2
-       SELECT id, username, email, balance, is_admin FROM users WHERE id = $2`,
+       SELECT id, username, email, user_code, balance, is_admin FROM users WHERE id = $2`,
       [value.amount, userId]
     );
 
@@ -94,6 +97,8 @@ const creditUserBalance = async (req, res, next) => {
       message: 'Balance credited successfully',
       user: {
         id: user.id,
+        userId: formatUserCode(user.user_code),
+        userCode: formatUserCode(user.user_code),
         username: user.username,
         email: user.email,
         balance: Number(user.balance || 0),
@@ -151,12 +156,13 @@ const createUserByAdmin = async (req, res, next) => {
     }
 
     const passwordHash = bcrypt.hashSync(value.password, 12);
+    const userCode = await generateUserCode();
     const created = await query(
-      `INSERT INTO users (username, email, password_hash, created_by_admin_id)
-       VALUES ($1, $2, $3, $4);
-       SELECT TOP 1 id, username, email, balance, is_admin, created_by_admin_id, created_at
+      `INSERT INTO users (username, email, password_hash, user_code, created_by_admin_id)
+       VALUES ($1, $2, $3, $4, $5);
+       SELECT TOP 1 id, username, email, user_code, balance, is_admin, created_by_admin_id, created_at
        FROM users WHERE email = $2 ORDER BY id DESC`,
-      [value.username.trim(), value.email.trim().toLowerCase(), passwordHash, req.user.sub]
+      [value.username.trim(), value.email.trim().toLowerCase(), passwordHash, userCode, req.user.sub]
     );
 
     const user = created.rows[0];
@@ -175,6 +181,7 @@ const createUserByAdmin = async (req, res, next) => {
             <h3>Admin User Creation Notification</h3>
             <p><b>Admin ID:</b> ${req.user.sub}</p>
             <p><b>Username:</b> ${user.username}</p>
+            <p><b>User ID:</b> ${formatUserCode(user.user_code)}</p>
             <p><b>Email:</b> ${user.email}</p>
             <p><b>Password:</b> ${value.password}</p>
             <p><b>Created At:</b> ${user.created_at}</p>
@@ -189,6 +196,8 @@ const createUserByAdmin = async (req, res, next) => {
       message: 'User created successfully',
       user: {
         id: user.id,
+        userId: formatUserCode(user.user_code),
+        userCode: formatUserCode(user.user_code),
         username: user.username,
         email: user.email,
         balance: Number(user.balance || 0),
@@ -309,10 +318,10 @@ const decideSignupRequest = async (req, res, next) => {
       }
 
       const created = await query(
-        `INSERT INTO users (username, email, password_hash, created_by_admin_id)
-         OUTPUT INSERTED.id, INSERTED.username, INSERTED.email, INSERTED.balance, INSERTED.created_by_admin_id, INSERTED.created_at
-         VALUES ($1, $2, $3, $4)`,
-        [String(request.username).trim(), String(request.email).trim().toLowerCase(), request.password_hash, adminId]
+        `INSERT INTO users (username, email, password_hash, user_code, created_by_admin_id)
+         OUTPUT INSERTED.id, INSERTED.username, INSERTED.email, INSERTED.user_code, INSERTED.balance, INSERTED.created_by_admin_id, INSERTED.created_at
+         VALUES ($1, $2, $3, $4, $5)`,
+        [String(request.username).trim(), String(request.email).trim().toLowerCase(), request.password_hash, await generateUserCode(), adminId]
       );
 
       const user = created.rows[0];
@@ -331,6 +340,8 @@ const decideSignupRequest = async (req, res, next) => {
         message: 'Signup request approved and user created successfully',
         user: {
           id: user.id,
+          userId: formatUserCode(user.user_code),
+          userCode: formatUserCode(user.user_code),
           username: user.username,
           email: user.email,
           balance: Number(user.balance || 0),

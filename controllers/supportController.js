@@ -2,6 +2,7 @@ const { query } = require('../config/db');
 const { sendAdminAlertEmail } = require('../config/mailer');
 const { supportTicketSchema } = require('../validation/schemas');
 const { getSetting } = require('../settings');
+const { ensureUserCodeForUser, formatUserCode } = require('../utils/userCode');
 
 const USER_ISSUES = [
   'Deposit pending or failed',
@@ -44,7 +45,7 @@ const getSupportContext = async (req, res, next) => {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const [profileRes, betRes, walletRes] = await Promise.all([
-      query('SELECT id, username, email, balance, created_at, is_admin FROM users WHERE id = $1', [userId]),
+      query('SELECT id, username, email, user_code, balance, created_at, is_admin FROM users WHERE id = $1', [userId]),
       query(
         `SELECT
            COUNT(*) AS total_bets,
@@ -67,6 +68,7 @@ const getSupportContext = async (req, res, next) => {
     if ((profileRes.rowCount || 0) === 0) return res.status(404).json({ error: 'User not found' });
 
     const profile = profileRes.rows[0];
+    const userCode = formatUserCode(profile.user_code) || await ensureUserCodeForUser(userId);
     const betStats = betRes.rows?.[0] || {};
     const walletStats = walletRes.rows?.[0] || {};
 
@@ -77,6 +79,8 @@ const getSupportContext = async (req, res, next) => {
       suggestedIssues,
       profile: {
         id: profile.id,
+        userId: userCode,
+        userCode,
         username: profile.username,
         email: profile.email,
         balance: Number(profile.balance || 0),

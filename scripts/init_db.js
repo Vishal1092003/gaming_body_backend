@@ -15,6 +15,7 @@ const createTables = async () => {
       username VARCHAR(30) NOT NULL UNIQUE,
       email VARCHAR(254) NOT NULL UNIQUE,
       password_hash NVARCHAR(MAX) NOT NULL,
+      user_code INT NULL,
       balance DECIMAL(12,2) NOT NULL DEFAULT 0,
       is_admin BIT NOT NULL DEFAULT 0,
       created_by_admin_id INT NULL,
@@ -24,6 +25,41 @@ const createTables = async () => {
   await query(`IF COL_LENGTH('users','balance') IS NULL ALTER TABLE users ADD balance DECIMAL(12,2) NOT NULL DEFAULT 0;`);
   await query(`IF COL_LENGTH('users','is_admin') IS NULL ALTER TABLE users ADD is_admin BIT NOT NULL DEFAULT 0;`);
   await query(`IF COL_LENGTH('users','created_by_admin_id') IS NULL ALTER TABLE users ADD created_by_admin_id INT NULL;`);
+  await query(`IF COL_LENGTH('users','user_code') IS NULL ALTER TABLE users ADD user_code INT NULL;`);
+  await query(`
+    ;WITH missing_codes AS (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS rn
+      FROM users
+      WHERE user_code IS NULL
+    )
+    UPDATE u
+    SET user_code = 100000 + missing_codes.rn
+    FROM users u
+    INNER JOIN missing_codes ON missing_codes.id = u.id
+    WHERE 100000 + missing_codes.rn <= 999999
+      AND NOT EXISTS (
+        SELECT 1 FROM users existing_user
+        WHERE existing_user.user_code = 100000 + missing_codes.rn
+      );
+  `);
+  await query(`
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.check_constraints
+      WHERE name = 'CK_users_user_code_six_digit'
+        AND parent_object_id = OBJECT_ID('users')
+    )
+    ALTER TABLE users
+    ADD CONSTRAINT CK_users_user_code_six_digit
+    CHECK (user_code BETWEEN 100000 AND 999999);
+  `);
+  await query(`
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'UX_users_user_code'
+        AND object_id = OBJECT_ID('users')
+    )
+    CREATE UNIQUE INDEX UX_users_user_code ON users(user_code) WHERE user_code IS NOT NULL;
+  `);
 
   await query(`
     IF OBJECT_ID('bets', 'U') IS NULL
