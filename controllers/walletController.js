@@ -1,6 +1,7 @@
 const { query } = require('../config/db');
 const { walletRequestSchema, walletRequestDecisionSchema } = require('../validation/schemas');
 const { sendAdminAlertEmail } = require('../config/mailer');
+const { createNotification } = require('../services/notifications');
 
 const withTimeout = (promise, ms) => {
   return Promise.race([
@@ -149,8 +150,9 @@ const decideWalletRequest = async (req, res, next) => {
         [value.status, value.note || null, req.user.sub, requestId]
       );
 
-      await query(
+      const transactionResult = await query(
         `INSERT INTO wallet_transactions (user_id, admin_user_id, amount, reason)
+         OUTPUT INSERTED.id
          VALUES ($1, $2, $3, $4)`,
         [
           reqRow.user_id,
@@ -159,6 +161,18 @@ const decideWalletRequest = async (req, res, next) => {
           `wallet_request_${reqRow.type}_${value.status}`,
         ]
       );
+
+      await createNotification({
+        recipientUserId: reqRow.user_id,
+        type: `wallet_request_${reqRow.type}_${value.status}`,
+        title: `${reqRow.type === 'deposit' ? 'Deposit' : 'Withdrawal'} ${value.status}`,
+        message: value.status === 'approved'
+          ? `Your ${reqRow.type} request for ₹${Number(reqRow.amount).toLocaleString('en-IN')} was approved by admin.`
+          : `Your ${reqRow.type} request for ₹${Number(reqRow.amount).toLocaleString('en-IN')} was rejected by admin.`,
+        entityType: 'wallet_transaction',
+        entityId: transactionResult.rows?.[0]?.id,
+        targetPath: '/src/bottombar/dashboard/transactions',
+      });
 
       return res.json({ message: `Request ${value.status}` });
     } catch (innerErr) {

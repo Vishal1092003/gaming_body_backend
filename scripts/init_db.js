@@ -176,6 +176,31 @@ const createTables = async () => {
   await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','admin_reply') IS NULL ALTER TABLE support_tickets ADD admin_reply NVARCHAR(MAX) NULL;`);
   await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','replied_by') IS NULL ALTER TABLE support_tickets ADD replied_by INT NULL;`);
   await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','replied_at') IS NULL ALTER TABLE support_tickets ADD replied_at DATETIME2 NULL;`);
+  await query(`
+    IF OBJECT_ID('notifications', 'U') IS NULL
+    CREATE TABLE notifications (
+      id INT IDENTITY(1,1) PRIMARY KEY,
+      recipient_user_id INT NOT NULL,
+      type VARCHAR(64) NOT NULL,
+      title VARCHAR(120) NOT NULL,
+      message VARCHAR(400) NOT NULL,
+      entity_type VARCHAR(64) NULL,
+      entity_id INT NULL,
+      target_path VARCHAR(240) NULL,
+      is_read BIT NOT NULL DEFAULT 0,
+      read_at DATETIME2 NULL,
+      created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+  `);
+  await query(`
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_notifications_recipient_created' AND object_id = OBJECT_ID('notifications'))
+    CREATE INDEX IX_notifications_recipient_created ON notifications (recipient_user_id, is_read, created_at DESC);
+  `);
+  await query(`
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_notifications_event' AND object_id = OBJECT_ID('notifications'))
+    CREATE UNIQUE INDEX UX_notifications_event ON notifications (recipient_user_id, type, entity_type, entity_id)
+    WHERE entity_type IS NOT NULL AND entity_id IS NOT NULL;
+  `);
 };
 
 const run = async () => {

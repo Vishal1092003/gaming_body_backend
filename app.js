@@ -9,6 +9,7 @@ const betRoutes = require('./routes/betRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const walletRoutes = require('./routes/walletRoutes');
 const supportRoutes = require('./routes/supportRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 const providerRoutes = require('./routes/providerRoutes');
 const { isMailerConfigured } = require('./config/mailer');
 const { errorHandler, notFound } = require('./middleware/errorMiddleware');
@@ -186,6 +187,31 @@ const ensureDatabaseSchemaAndBootstrap = async () => {
   await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','admin_reply') IS NULL ALTER TABLE support_tickets ADD admin_reply NVARCHAR(MAX) NULL;`);
   await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','replied_by') IS NULL ALTER TABLE support_tickets ADD replied_by INT NULL;`);
   await query(`IF OBJECT_ID('support_tickets', 'U') IS NOT NULL AND COL_LENGTH('support_tickets','replied_at') IS NULL ALTER TABLE support_tickets ADD replied_at DATETIME2 NULL;`);
+  await query(`
+    IF OBJECT_ID('notifications', 'U') IS NULL
+    CREATE TABLE notifications (
+      id INT IDENTITY(1,1) PRIMARY KEY,
+      recipient_user_id INT NOT NULL,
+      type VARCHAR(64) NOT NULL,
+      title VARCHAR(120) NOT NULL,
+      message VARCHAR(400) NOT NULL,
+      entity_type VARCHAR(64) NULL,
+      entity_id INT NULL,
+      target_path VARCHAR(240) NULL,
+      is_read BIT NOT NULL DEFAULT 0,
+      read_at DATETIME2 NULL,
+      created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+  `);
+  await query(`
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_notifications_recipient_created' AND object_id = OBJECT_ID('notifications'))
+    CREATE INDEX IX_notifications_recipient_created ON notifications (recipient_user_id, is_read, created_at DESC);
+  `);
+  await query(`
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_notifications_event' AND object_id = OBJECT_ID('notifications'))
+    CREATE UNIQUE INDEX UX_notifications_event ON notifications (recipient_user_id, type, entity_type, entity_id)
+    WHERE entity_type IS NOT NULL AND entity_id IS NOT NULL;
+  `);
 
   console.log(`[HEALTH] Admin signup hash: ${getSetting('ADMIN_SIGNUP_CODE_HASH') || getSetting('ADMIN_SIGNUP_CODE') ? 'STORED' : 'NOT SET (admin self-signup disabled)'}`);
   if (getSetting('ADMIN_EMAIL')) {
@@ -218,6 +244,7 @@ app.use('/api/bets', betRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/support', supportRoutes);
+app.use('/api/notifications', notificationRoutes);
 app.use('/api', providerRoutes);
 app.get('/api/health', async (req, res) => {
   try {
@@ -269,6 +296,9 @@ const start = async () => {
       'GET  /api/support/my-tickets',
       'GET  /api/support/tickets (admin)',
       'POST /api/support/tickets/:ticketId/reply (admin)',
+      'GET  /api/notifications',
+      'PATCH /api/notifications/:notificationId/read',
+      'PATCH /api/notifications/read-all',
       'GET  /api/admin/users',
       'POST /api/admin/users',
       'POST /api/admin/users/:userId/credit',

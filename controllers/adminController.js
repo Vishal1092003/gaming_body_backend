@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const { query } = require('../config/db');
 const { sendAdminAlertEmail } = require('../config/mailer');
 const { formatUserCode, generateUserCode } = require('../utils/userCode');
+const { createNotification } = require('../services/notifications');
 const {
   adminCreditBalanceSchema,
   adminResetUserPasswordSchema,
@@ -86,11 +87,22 @@ const creditUserBalance = async (req, res, next) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    await query(
+    const transactionResult = await query(
       `INSERT INTO wallet_transactions (user_id, admin_user_id, amount, reason)
+       OUTPUT INSERTED.id
        VALUES ($1, $2, $3, $4)`,
       [userId, req.user.sub, value.amount, value.reason]
     );
+
+    await createNotification({
+      recipientUserId: userId,
+      type: 'admin_wallet_credit',
+      title: 'Wallet credited by admin',
+      message: `Admin added ₹${Number(value.amount).toLocaleString('en-IN')} to your wallet.${value.reason ? ` ${value.reason}` : ''}`,
+      entityType: 'wallet_transaction',
+      entityId: transactionResult.rows?.[0]?.id,
+      targetPath: '/src/bottombar/dashboard/transactions',
+    });
 
     const user = updated.rows[0];
     return res.json({

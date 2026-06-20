@@ -3,6 +3,7 @@ const { sendAdminAlertEmail } = require('../config/mailer');
 const { supportTicketSchema } = require('../validation/schemas');
 const { getSetting } = require('../settings');
 const { ensureUserCodeForUser, formatUserCode } = require('../utils/userCode');
+const { createNotification, getManagingAdminIdForUser } = require('../services/notifications');
 
 const USER_ISSUES = [
   'Deposit pending or failed',
@@ -124,6 +125,18 @@ const createSupportTicket = async (req, res, next) => {
     );
 
     const ticket = insertResult.rows?.[0];
+    if (!req.user?.isAdmin) {
+      const adminUserId = await getManagingAdminIdForUser(userId);
+      await createNotification({
+        recipientUserId: adminUserId,
+        type: 'support_ticket_created',
+        title: 'New user query',
+        message: `${req.user.username} opened a support query: ${value.issueType}.`,
+        entityType: 'support_ticket',
+        entityId: ticket?.id,
+        targetPath: '/src/bottombar/customerSupport',
+      });
+    }
 
     if (adminRecipient) {
       try {
