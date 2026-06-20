@@ -6,6 +6,11 @@ const { sendResetCodeEmail } = require('../config/mailer');
 const { getSetting, getNumberSetting } = require('../settings');
 const { ensureUserCodeForUser, formatUserCode, generateUserCode } = require('../utils/userCode');
 const {
+  createNotification,
+  createNotificationsForAllAdmins,
+  getManagingAdminIdForUser,
+} = require('../services/notifications');
+const {
   loginSchema,
   registerSchema,
   forgotPasswordSchema,
@@ -82,11 +87,22 @@ const register = async (req, res, next) => {
       }
 
       const passwordHash = bcrypt.hashSync(value.password, 12);
-      await query(
+      const signupRequest = await query(
         `INSERT INTO signup_requests (username, email, password_hash, status)
+         OUTPUT INSERTED.id, INSERTED.username
          VALUES ($1, $2, $3, 'pending')`,
         [value.username.trim(), value.email.trim().toLowerCase(), passwordHash]
       );
+
+      const request = signupRequest.rows?.[0];
+      await createNotificationsForAllAdmins({
+        type: 'signup_request_created',
+        title: 'New signup request',
+        message: `${request?.username || value.username.trim()} requested a new account.`,
+        entityType: 'signup_request',
+        entityId: request?.id,
+        targetPath: '/src/bottombar/admin?tab=signupRequests',
+      });
 
       return res.status(201).json({ message: 'Signup request sent to admin successfully' });
     }
@@ -186,6 +202,73 @@ const logout = async (req, res, next) => {
   }
 };
 
+const deleteOwnAccount = async (req, res, next) => {
+  try {
+    const userId = Number(req.user?.sub);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    if (req.user?.isAdmin) {
+      return res.status(403).json({ error: 'Admin accounts cannot be deleted from the app. Contact the platform owner.' });
+    }
+
+    const userResult = await query(
+      'SELECT TOP 1 id, username, email FROM users WHERE id = $1 AND is_admin = 0',
+      [userId]
+    );
+    if (userResult.rowCount === 0) {
+      return res.status(404).json({ error: 'Account not found or already deleted' });
+    }
+
+    const user = userResult.rows[0];
+    const adminUserId = await getManagingAdminIdForUser(userId);
+    const decoded = jwt.decode(req.token);
+    const expiresAt = decoded?.exp ? new Date(decoded.exp * 1000) : new Date(Date.now() + 4 * 60 * 60 * 1000);
+
+    await query(
+      `BEGIN TRY
+         BEGIN TRANSACTION;
+           DELETE FROM password_reset_tokens WHERE user_id = $1;
+           DELETE FROM notifications WHERE recipient_user_id = $1;
+           DELETE FROM wallet_transactions WHERE user_id = $1;
+           DELETE FROM wallet_requests WHERE user_id = $1;
+           DELETE FROM bets WHERE user_id = $1;
+           DELETE FROM support_tickets WHERE user_id = $1;
+           DELETE FROM signup_requests WHERE created_user_id = $1;
+           DELETE FROM users WHERE id = $1 AND is_admin = 0;
+           IF NOT EXISTS (SELECT 1 FROM token_blacklist WHERE token = $2)
+             INSERT INTO token_blacklist (token, expires_at) VALUES ($2, $3);
+         COMMIT TRANSACTION;
+       END TRY
+       BEGIN CATCH
+         IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+         THROW;
+       END CATCH`,
+      [userId, req.token, expiresAt]
+    );
+
+    if (adminUserId) {
+      try {
+        await createNotification({
+          recipientUserId: adminUserId,
+          type: 'user_account_deleted',
+          title: 'User account deleted',
+          message: `${user.username} permanently deleted their account.`,
+          entityType: 'deleted_user',
+          entityId: userId,
+          targetPath: '/src/bottombar/admin?tab=users',
+        });
+      } catch (notificationError) {
+        console.error('[NOTIFICATIONS] Account deletion notification failed:', notificationError.message);
+      }
+    }
+
+    return res.json({ message: 'Account deleted successfully' });
+  } catch (err) {
+    next(err);
+  }
+};
+
 const forgotPassword = async (req, res, next) => {
   try {
     const { error, value } = forgotPasswordSchema.validate(req.body, { abortEarly: false });
@@ -261,4 +344,4 @@ const resetPassword = async (req, res, next) => {
   }
 };
 
-module.exports = { register, login, logout, forgotPassword, resetPassword };
+module.exports = { register, login, logout, deleteOwnAccount, forgotPassword, resetPassword };
