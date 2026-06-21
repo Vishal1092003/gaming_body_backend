@@ -23,6 +23,9 @@ const getTransporter = () => {
     host: mailerConfig.host,
     port: mailerConfig.port,
     secure: mailerConfig.secure,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
     auth: {
       user: mailerConfig.user,
       pass: mailerConfig.pass,

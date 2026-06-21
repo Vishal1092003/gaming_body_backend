@@ -291,11 +291,15 @@ const forgotPassword = async (req, res, next) => {
         [user.id, user.email, codeHash, Number(getPasswordResetTtlMinutes())]
       );
 
-      try {
-        await sendResetCodeEmail({ to: user.email, code });
-      } catch (mailErr) {
-        console.error('[MAIL] Failed to send reset password email:', mailErr.message);
-      }
+      // Do not keep the mobile request open while SMTP negotiates with Gmail.
+      // The code is already stored, and delivery is retried by the user if needed.
+      setImmediate(async () => {
+        try {
+          await sendResetCodeEmail({ to: user.email, code });
+        } catch (mailErr) {
+          console.error('[MAIL] Failed to send reset password email:', mailErr.message);
+        }
+      });
     }
 
     return res.json({
