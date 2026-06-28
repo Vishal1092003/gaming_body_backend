@@ -6,15 +6,28 @@ const API_CRICKET_URL = 'https://apiv2.api-cricket.com/cricket';
 const LIVE_POLL_INTERVAL_MS = getNumberSetting('API_CRICKET_LIVE_POLL_INTERVAL_MS', 15000);
 const ODDS_POLL_INTERVAL_MS = getNumberSetting('API_CRICKET_ODDS_POLL_INTERVAL_MS', 30000);
 const API_TIMEOUT_MS = getNumberSetting('API_CRICKET_TIMEOUT_MS', 25000);
+const API_CRICKET_TIME_TO_UTC_OFFSET_MINUTES = getNumberSetting('API_CRICKET_TIME_TO_UTC_OFFSET_MINUTES', -120);
 const LIVE_START_GRACE_MS = 2 * 60 * 60 * 1000;
 const LIVE_MAX_AGE_MS = 36 * 60 * 60 * 1000;
 
 const BOOKMAKER_FALLBACK_ORDER = ['bet365', '1xBet', 'Marathon', 'Unibet', 'Betfair', 'BetVictor', 'Pncl'];
+const EXCLUDED_LIVE_KEYWORDS = [
+  'women',
+  "women's",
+  'womens',
+  'female',
+  'girls',
+  '2nd xi',
+  'second eleven',
+  'tba',
+  'tbd',
+];
 
 const apiClient = axios.create({
   baseURL: API_CRICKET_URL,
   timeout: API_TIMEOUT_MS,
 });
+
 
 let started = false;
 let oddsCache = { ts: 0, byEventId: {} };
@@ -96,15 +109,45 @@ const normalizeEventStatus = (event = {}) => {
 
 const formatScore = (value) => String(value || '').trim();
 
+const buildApiCricketDateTimeGMT = (event = {}) => {
+  const startDate = event?.event_date_start || event?.event_date || todayUtc();
+  const [hoursRaw, minutesRaw] = String(event?.event_time || '00:00').split(':');
+  const hours = Number(hoursRaw);
+  const minutes = Number(minutesRaw);
+  const ts = Date.UTC(
+    Number(startDate.slice(0, 4)),
+    Number(startDate.slice(5, 7)) - 1,
+    Number(startDate.slice(8, 10)),
+    Number.isFinite(hours) ? hours : 0,
+    Number.isFinite(minutes) ? minutes : 0,
+    0
+  );
+  return new Date(ts + API_CRICKET_TIME_TO_UTC_OFFSET_MINUTES * 60 * 1000).toISOString();
+};
+
+const isExcludedLiveEvent = (event = {}) => {
+  const text = [
+    event?.event_home_team,
+    event?.event_away_team,
+    event?.league_name,
+    event?.league_round,
+    event?.event_type,
+    event?.event_status,
+    event?.event_status_info,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return EXCLUDED_LIVE_KEYWORDS.some((keyword) => text.includes(keyword));
+};
+
 const eventToRealtimeMatch = (event = {}, oddsMarkets = {}) => {
   const status = normalizeEventStatus(event);
   const allMarkets = normalizeOddsMarkets(oddsMarkets);
   const odds = extractHomeAwayOdds(allMarkets);
   const homeScore = formatScore(event?.event_home_final_result);
   const awayScore = formatScore(event?.event_away_final_result);
-  const startDate = event?.event_date_start || event?.event_date || todayUtc();
-  const startTime = event?.event_time ? `${event.event_time}:00` : '00:00:00';
-  const dateTimeGMT = `${startDate}T${startTime}Z`;
+  const dateTimeGMT = buildApiCricketDateTimeGMT(event);
   const startTs = new Date(dateTimeGMT).getTime();
   const ageMs = Number.isFinite(startTs) ? Date.now() - startTs : 0;
   const isPastBeyondGrace = Number.isFinite(startTs) && ageMs > LIVE_START_GRACE_MS;
@@ -143,6 +186,11 @@ const eventToRealtimeMatch = (event = {}, oddsMarkets = {}) => {
     scorecard: event?.scorecard || null,
     wickets: event?.wickets || [],
     comments: event?.comments || [],
+    extra: event?.extra || [],
+    lineups: event?.lineups || [],
+    toss: event?.event_toss || '',
+    homeRunRate: event?.event_home_rr ?? null,
+    awayRunRate: event?.event_away_rr ?? null,
     isRealtime: true,
     _apiCricket: event,
   };
@@ -160,8 +208,14 @@ const buildHash = (matches = []) => JSON.stringify(
     scorecard: match.scorecard,
     wickets: match.wickets,
     comments: match.comments,
+    extra: match.extra,
+    lineups: match.lineups,
+    toss: match.toss,
+    homeRunRate: match.homeRunRate,
+    awayRunRate: match.awayRunRate,
   }))
 );
+
 
 const refreshOdds = async () => {
   const date = todayUtc();
@@ -190,6 +244,7 @@ const refreshLiveSnapshot = async ({ forceOdds = false } = {}) => {
   });
   const events = Array.isArray(payload?.result) ? payload.result : [];
   const matches = events
+    .filter((event) => !isExcludedLiveEvent(event))
     .map((event) => eventToRealtimeMatch(event, oddsCache.byEventId[String(event?.event_key)] || {}))
     .filter((match) => match.category === 'live');
 
