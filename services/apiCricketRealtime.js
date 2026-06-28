@@ -142,6 +142,7 @@ const eventToRealtimeMatch = (event = {}, oddsMarkets = {}) => {
     oddsMarkets: allMarkets,
     scorecard: event?.scorecard || null,
     wickets: event?.wickets || [],
+    comments: event?.comments || [],
     isRealtime: true,
     _apiCricket: event,
   };
@@ -158,6 +159,7 @@ const buildHash = (matches = []) => JSON.stringify(
     oddsMarkets: match.oddsMarkets,
     scorecard: match.scorecard,
     wickets: match.wickets,
+    comments: match.comments,
   }))
 );
 
