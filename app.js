@@ -1,8 +1,11 @@
 const express = require('express');
+const http = require('http');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { getSetting, getNumberSetting } = require('./settings');
+const { configureSocketServer } = require('./services/socketService');
+const { startApiCricketRealtime } = require('./services/apiCricketRealtime');
 
 const authRoutes = require('./routes/authRoutes');
 const betRoutes = require('./routes/betRoutes');
@@ -308,6 +311,7 @@ const start = async () => {
       'GET  /api/health',
       'GET  /api/live-scores',
       'GET  /api/cricket',
+      'GET  /api/cricket/live-snapshot',
       'GET  /api/live-scores/stream',
       'GET  /api/scheduled-scores',
       'GET  /api/metrics',
@@ -317,9 +321,13 @@ const start = async () => {
     ].forEach((route) => console.log(`  - ${route} [OK]`));
     await ensureDatabaseSchemaAndBootstrap();
     console.log('[HEALTH] Schema/bootstrap complete');
-    app.listen(PORT, () => {
+    const server = http.createServer(app);
+    configureSocketServer(server);
+    startApiCricketRealtime();
+    server.listen(PORT, () => {
       console.log(`Backend listening on http://localhost:${PORT}`);
       console.log(`Health endpoint: http://localhost:${PORT}/api/health`);
+      console.log(`WebSocket endpoint: ws://localhost:${PORT}/socket.io`);
     });
   } catch (error) {
     console.error('Unable to connect to database:', error.message);
