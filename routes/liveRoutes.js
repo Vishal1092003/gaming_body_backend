@@ -3,6 +3,7 @@ const axios = require('axios');
 const router = express.Router();
 const { getSetting } = require('../settings');
 const { emitter, startPolling, getLiveCache, getScheduleCache, getOrRefreshScheduleCache } = require('../services/livePoller');
+const { getApiCricketLiveSnapshot, refreshLiveSnapshot } = require('../services/apiCricketRealtime');
 const { getMetrics } = require('../services/metrics');
 
 const API_CRICKET_URL = 'https://apiv2.api-cricket.com/cricket';
@@ -53,6 +54,22 @@ router.get('/cricket', async (req, res) => {
 router.get('/live-scores', (req, res) => {
   const cache = getLiveCache();
   res.json({ stale: cache.stale, ts: Date.now(), data: cache.data });
+});
+
+router.get('/cricket/live-snapshot', async (req, res) => {
+  try {
+    const force = String(req.query.refresh || '').toLowerCase() === 'true';
+    const snapshot = getApiCricketLiveSnapshot();
+    const shouldRefresh = force || !snapshot?.ts || Date.now() - Number(snapshot.ts || 0) > 30000;
+    const data = shouldRefresh ? await refreshLiveSnapshot({ forceOdds: force }) : snapshot;
+    return res.json(data);
+  } catch (error) {
+    return res.status(502).json({
+      error: 'Unable to load realtime cricket snapshot',
+      detail: error.message,
+      ts: Date.now(),
+    });
+  }
 });
 
 router.get('/scheduled-scores', async (req, res) => {
