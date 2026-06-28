@@ -16,6 +16,8 @@ const listUsers = async (req, res, next) => {
     const limit = Math.min(Math.max(Number(req.query.limit || 25), 1), 100);
     const adminId = Number(req.user.sub);
 
+ 
+
     let result;
     if (search) {
       result = await query(
