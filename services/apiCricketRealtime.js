@@ -9,7 +9,6 @@ const API_TIMEOUT_MS = getNumberSetting('API_CRICKET_TIMEOUT_MS', 25000);
 const LIVE_START_GRACE_MS = 2 * 60 * 60 * 1000;
 const LIVE_MAX_AGE_MS = 36 * 60 * 60 * 1000;
 
-const ALLOWED_ODDS_MARKETS = new Set(['Home/Away', '3Way Result', 'Double Chance']);
 const BOOKMAKER_FALLBACK_ORDER = ['bet365', '1xBet', 'Marathon', 'Unibet', 'Betfair', 'BetVictor', 'Pncl'];
 
 const apiClient = axios.create({
@@ -70,12 +69,9 @@ const normalizeOdd = (value) => {
   return Number.isFinite(numeric) ? numeric.toFixed(2).replace(/\.00$/, '') : String(value);
 };
 
-const filterAllowedMarkets = (markets = {}) => {
-  const out = {};
-  Object.entries(markets || {}).forEach(([marketName, marketValue]) => {
-    if (ALLOWED_ODDS_MARKETS.has(marketName)) out[marketName] = marketValue;
-  });
-  return out;
+const normalizeOddsMarkets = (markets = {}) => {
+  if (!markets || typeof markets !== 'object' || Array.isArray(markets)) return {};
+  return { ...markets };
 };
 
 const extractHomeAwayOdds = (markets = {}) => {
@@ -102,8 +98,8 @@ const formatScore = (value) => String(value || '').trim();
 
 const eventToRealtimeMatch = (event = {}, oddsMarkets = {}) => {
   const status = normalizeEventStatus(event);
-  const allowedMarkets = filterAllowedMarkets(oddsMarkets);
-  const odds = extractHomeAwayOdds(allowedMarkets);
+  const allMarkets = normalizeOddsMarkets(oddsMarkets);
+  const odds = extractHomeAwayOdds(allMarkets);
   const homeScore = formatScore(event?.event_home_final_result);
   const awayScore = formatScore(event?.event_away_final_result);
   const startDate = event?.event_date_start || event?.event_date || todayUtc();
@@ -143,7 +139,7 @@ const eventToRealtimeMatch = (event = {}, oddsMarkets = {}) => {
     odds1: odds.odds1,
     odds2: odds.odds2,
     oddsBookmaker: odds.bookmaker,
-    oddsMarkets: allowedMarkets,
+    oddsMarkets: allMarkets,
     scorecard: event?.scorecard || null,
     wickets: event?.wickets || [],
     isRealtime: true,
@@ -159,6 +155,7 @@ const buildHash = (matches = []) => JSON.stringify(
     score2: match.score2,
     odds1: match.odds1,
     odds2: match.odds2,
+    oddsMarkets: match.oddsMarkets,
     scorecard: match.scorecard,
     wickets: match.wickets,
   }))
