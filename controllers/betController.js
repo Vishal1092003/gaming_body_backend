@@ -113,16 +113,38 @@ const syncPendingRows = async (rows = []) => {
     if (!nextStatus || nextStatus === row.status) continue;
 
     const winnings = nextStatus === 'Paid Out' ? Math.round(Number(row.stake || 0) * Number(row.odds || 0)) : 0;
-    await query(
-      `UPDATE bets
-          SET status = $1,
-              winnings = $2,
-              settled_at = SYSUTCDATETIME()
-        WHERE id = $3
-          AND status = 'Pending'`,
+    const result = await query(
+      `DECLARE @Settled TABLE (user_id INT, winnings DECIMAL(12,2));
+
+       BEGIN TRY
+         BEGIN TRAN;
+
+         UPDATE bets
+            SET status = $1,
+                winnings = $2,
+                settled_at = SYSUTCDATETIME()
+          OUTPUT INSERTED.user_id, INSERTED.winnings INTO @Settled(user_id, winnings)
+          WHERE id = $3
+            AND status = 'Pending';
+
+         IF $1 = 'Paid Out'
+         BEGIN
+           UPDATE u
+              SET balance = u.balance + s.winnings
+             FROM users u
+             INNER JOIN @Settled s ON s.user_id = u.id;
+         END;
+
+         COMMIT;
+         SELECT COUNT(*) AS updated FROM @Settled;
+       END TRY
+       BEGIN CATCH
+         IF @@TRANCOUNT > 0 ROLLBACK;
+         THROW;
+       END CATCH`,
       [nextStatus, winnings, row.id]
     );
-    updates += 1;
+    updates += Number(result.rows?.[0]?.updated || 0);
   }
 
   return updates;
@@ -131,7 +153,7 @@ const syncPendingRows = async (rows = []) => {
 const syncPendingBetsForUser = async (userId) => {
   if (!userId || !canSyncFixtures()) return 0;
   const pending = await query(
-    `SELECT id, fixture_id, status, stake, odds, predicted_team, predicted_team_id
+    `SELECT id, user_id, fixture_id, status, stake, odds, predicted_team, predicted_team_id
        FROM bets
       WHERE user_id = $1
         AND status = 'Pending'
@@ -144,7 +166,7 @@ const syncPendingBetsForUser = async (userId) => {
 const syncPendingBetsForAdmin = async (adminId) => {
   if (!adminId || !canSyncFixtures()) return 0;
   const pending = await query(
-    `SELECT b.id, b.fixture_id, b.status, b.stake, b.odds, b.predicted_team, b.predicted_team_id
+    `SELECT b.id, b.user_id, b.fixture_id, b.status, b.stake, b.odds, b.predicted_team, b.predicted_team_id
        FROM bets b
        JOIN users u ON u.id = b.user_id
       WHERE u.created_by_admin_id = $1
@@ -175,14 +197,53 @@ const createBet = async (req, res, next) => {
     const betDate = normalizeBetDate(value.date);
 
     const result = await query(
-      `INSERT INTO bets (user_id, [date], [type], stake, odds, winnings, status, match_label, fixture_id, predicted_team, predicted_team_id, client_ref)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
-       SELECT TOP 1 * FROM bets WHERE user_id = $1 ORDER BY id DESC`,
+      `DECLARE @Debited TABLE (balance DECIMAL(12,2));
+       DECLARE @BetId INT;
+       DECLARE @FinalBalance DECIMAL(12,2);
+
+       BEGIN TRY
+         BEGIN TRAN;
+
+         UPDATE users
+            SET balance = balance - $1
+          OUTPUT INSERTED.balance INTO @Debited(balance)
+          WHERE id = $2
+            AND balance >= $1;
+
+         IF NOT EXISTS (SELECT 1 FROM @Debited)
+         BEGIN
+           ROLLBACK;
+           SELECT CAST(0 AS INT) AS ok, CAST('INSUFFICIENT_BALANCE' AS VARCHAR(64)) AS code;
+           RETURN;
+         END;
+
+         INSERT INTO bets (user_id, [date], [type], stake, odds, winnings, status, match_label, fixture_id, predicted_team, predicted_team_id, client_ref)
+         VALUES ($2, $3, $4, $1, $5, $6, $7, $8, $9, $10, $11, $12);
+
+         SET @BetId = SCOPE_IDENTITY();
+
+         IF $7 IN ('Paid Out', 'Incremented')
+         BEGIN
+           UPDATE users SET balance = balance + $6 WHERE id = $2;
+         END;
+
+         SELECT @FinalBalance = balance FROM users WHERE id = $2;
+
+         COMMIT;
+
+         SELECT CAST(1 AS INT) AS ok, @FinalBalance AS balance, b.*
+           FROM bets b
+          WHERE b.id = @BetId;
+       END TRY
+       BEGIN CATCH
+         IF @@TRANCOUNT > 0 ROLLBACK;
+         THROW;
+       END CATCH`,
       [
+        stake,
         req.user.sub,
         betDate,
         value.type,
-        stake,
         odds,
         winnings,
         value.status,
@@ -194,7 +255,12 @@ const createBet = async (req, res, next) => {
       ]
     );
 
-    return res.status(201).json({ message: 'Bet created', bet: result.rows[0] });
+    const row = result.rows[0];
+    if (!row?.ok) {
+      return res.status(400).json({ error: 'Insufficient balance' });
+    }
+    const { ok, balance, ...bet } = row;
+    return res.status(201).json({ message: 'Bet created', bet, balance: Number(balance || 0) });
   } catch (err) {
     next(err);
   }
@@ -225,7 +291,11 @@ const getHistory = async (req, res, next) => {
        ORDER BY created_at DESC`,
       [req.user.sub]
     );
-    return res.json({ history: result.rows });
+    const balance = await query('SELECT balance FROM users WHERE id = $1', [req.user.sub]);
+    return res.json({
+      history: result.rows,
+      balance: Number(balance.rows?.[0]?.balance || 0),
+    });
   } catch (err) {
     next(err);
   }
