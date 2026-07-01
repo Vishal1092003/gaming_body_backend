@@ -4,6 +4,7 @@ const { betSchema } = require('../validation/schemas');
 const { getSetting } = require('../settings');
 
 const API_CRICKET_BASE = 'https://apiv2.api-cricket.com/cricket';
+const API_CRICKET_TIMEZONE = 'Asia/Kolkata';
 
 const fixtureClient = axios.create({ baseURL: API_CRICKET_BASE, timeout: 15000 });
 const fixtureCache = new Map();
@@ -28,7 +29,7 @@ const endedFixtureStatuses = new Set([
 
 const getApiCricketKey = () => String(getSetting('API_CRICKET_KEY') || '').trim();
 
-const withApiCricketKey = (params = {}) => ({ ...params, APIkey: getApiCricketKey() });
+const withApiCricketKey = (params = {}) => ({ timezone: API_CRICKET_TIMEZONE, ...params, APIkey: getApiCricketKey() });
 
 const canSyncFixtures = () => getApiCricketKey() !== '';
 

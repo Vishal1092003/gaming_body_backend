@@ -11,6 +11,7 @@ const API_CRICKET_METHODS = new Set([
   'get_leagues',
   'get_odds',
 ]);
+const API_CRICKET_TIMEZONE = 'Asia/Kolkata';
 const apiCricketClient = axios.create({
   baseURL: API_CRICKET_URL,
   timeout: Number(process.env.API_CRICKET_TIMEOUT_MS || 25000),
@@ -43,7 +44,7 @@ const callApiCricket = async (params = {}) => {
     throw err;
   }
   const response = await apiCricketClient.get('', {
-    params: { ...params, APIkey: apiKey },
+    params: { timezone: API_CRICKET_TIMEZONE, ...params, APIkey: apiKey },
   });
   return response.data;
 };
