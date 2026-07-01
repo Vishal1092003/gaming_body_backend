@@ -3,10 +3,11 @@ const { getSetting, getNumberSetting } = require('../settings');
 const { emitToAll } = require('./socketService');
 
 const API_CRICKET_URL = 'https://apiv2.api-cricket.com/cricket';
+const API_CRICKET_TIMEZONE = 'Asia/Kolkata';
 const LIVE_POLL_INTERVAL_MS = getNumberSetting('API_CRICKET_LIVE_POLL_INTERVAL_MS', 15000);
 const ODDS_POLL_INTERVAL_MS = getNumberSetting('API_CRICKET_ODDS_POLL_INTERVAL_MS', 30000);
 const API_TIMEOUT_MS = getNumberSetting('API_CRICKET_TIMEOUT_MS', 25000);
-const API_CRICKET_TIME_TO_UTC_OFFSET_MINUTES = getNumberSetting('API_CRICKET_TIME_TO_UTC_OFFSET_MINUTES', 0);
+const API_CRICKET_TIME_TO_UTC_OFFSET_MINUTES = getNumberSetting('API_CRICKET_TIME_TO_UTC_OFFSET_MINUTES', -330);
 const LIVE_START_GRACE_MS = 2 * 60 * 60 * 1000;
 const LIVE_MAX_AGE_MS = 36 * 60 * 60 * 1000;
 
@@ -58,7 +59,7 @@ const callApiCricket = async (params) => {
     err.code = 'API_CRICKET_NO_KEY';
     throw err;
   }
-  const response = await apiClient.get('', { params: { ...params, APIkey } });
+  const response = await apiClient.get('', { params: { timezone: API_CRICKET_TIMEZONE, ...params, APIkey } });
   if (response.data?.error === '1') {
     throw new Error(response.data?.message || 'API Cricket returned an error');
   }
