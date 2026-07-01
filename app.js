@@ -226,10 +226,18 @@ const ensureDatabaseSchemaAndBootstrap = async () => {
 // Ensure correct client IP behind reverse proxies (Render, Fly, Nginx, etc.)
 // so IP-based protections work as expected.
 app.set('trust proxy', 1);
+app.set('etag', false);
 
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
+
+app.use('/api', (req, res, next) => {
+  if (!req.path.startsWith('/cricket')) {
+    res.setHeader('Cache-Control', 'no-store');
+  }
+  next();
+});
 
 // Request log to verify every API hit in terminal
 app.use((req, res, next) => {

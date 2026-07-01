@@ -41,7 +41,6 @@ let lastBroadcastHash = '';
 
 const getApiKey = () =>
   getSetting('API_CRICKET_KEY') ||
-  getSetting('EXPO_PUBLIC_API_CRICKET_KEY') ||
   '';
 
 const addDays = (date, delta) => {
@@ -147,6 +146,7 @@ const eventToRealtimeMatch = (event = {}, oddsMarkets = {}) => {
   const odds = extractHomeAwayOdds(allMarkets);
   const homeScore = formatScore(event?.event_home_final_result);
   const awayScore = formatScore(event?.event_away_final_result);
+  const startDate = event?.event_date_start || event?.event_date || todayUtc();
   const dateTimeGMT = buildApiCricketDateTimeGMT(event);
   const startTs = new Date(dateTimeGMT).getTime();
   const ageMs = Number.isFinite(startTs) ? Date.now() - startTs : 0;

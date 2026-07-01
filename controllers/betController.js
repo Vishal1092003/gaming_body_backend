@@ -1,17 +1,11 @@
 const axios = require('axios');
 const { query } = require('../config/db');
 const { betSchema } = require('../validation/schemas');
+const { getSetting } = require('../settings');
 
-const SPORTMONKS_BASE =
-  process.env.SPORTMONKS_BASE_URL ||
-  process.env.EXPO_PUBLIC_SPORTMONKS_BASE_URL ||
-  'https://cricket.sportmonks.com/api/v2.0';
-const SPORTMONKS_KEY =
-  process.env.SPORTMONKS_API_KEY ||
-  process.env.EXPO_PUBLIC_SPORTMONKS_API_KEY ||
-  '';
+const API_CRICKET_BASE = 'https://apiv2.api-cricket.com/cricket';
 
-const fixtureClient = axios.create({ baseURL: SPORTMONKS_BASE, timeout: 15000 });
+const fixtureClient = axios.create({ baseURL: API_CRICKET_BASE, timeout: 15000 });
 const fixtureCache = new Map();
 const FIXTURE_CACHE_TTL_MS = 60 * 1000;
 
@@ -32,29 +26,24 @@ const endedFixtureStatuses = new Set([
   'stumps',
 ]);
 
-const withToken = (params = {}) => ({ api_token: SPORTMONKS_KEY, ...params });
+const getApiCricketKey = () => String(getSetting('API_CRICKET_KEY') || '').trim();
 
-const canSyncFixtures = () => String(SPORTMONKS_KEY || '').trim() !== '';
+const withApiCricketKey = (params = {}) => ({ ...params, APIkey: getApiCricketKey() });
+
+const canSyncFixtures = () => getApiCricketKey() !== '';
 
 const readWinnerName = (fixture) => {
-  const winnerId = fixture?.winner_team_id;
-  const local = fixture?.localteam?.data || fixture?.localteam || null;
-  const visitor = fixture?.visitorteam?.data || fixture?.visitorteam || null;
-  if (winnerId != null) {
-    if (String(local?.id) === String(winnerId)) return local?.name || null;
-    if (String(visitor?.id) === String(winnerId)) return visitor?.name || null;
-  }
-  const note = String(fixture?.note || fixture?.status || '').trim();
-  const localName = String(local?.name || '').trim();
-  const visitorName = String(visitor?.name || '').trim();
+  const note = String(fixture?.event_status_info || fixture?.event_status || '').trim();
+  const localName = String(fixture?.event_home_team || '').trim();
+  const visitorName = String(fixture?.event_away_team || '').trim();
   if (localName && note.toLowerCase().includes(localName.toLowerCase()) && note.toLowerCase().includes('won')) return localName;
   if (visitorName && note.toLowerCase().includes(visitorName.toLowerCase()) && note.toLowerCase().includes('won')) return visitorName;
   return null;
 };
 
 const isFixtureFinished = (fixture) => {
-  const status = normalizeText(fixture?.status || fixture?.note || '');
-  return endedFixtureStatuses.has(status) || endedFixtureStatuses.has(normalizeText(fixture?.status || ''));
+  const status = normalizeText(`${fixture?.event_status || ''} ${fixture?.event_status_info || ''}`);
+  return endedFixtureStatuses.has(status) || /finished|won by|result|abandoned|no result|cancelled|canceled/.test(status);
 };
 
 const fetchFixture = async (fixtureId) => {
@@ -66,10 +55,10 @@ const fetchFixture = async (fixtureId) => {
     return cached.data;
   }
 
-  const res = await fixtureClient.get(`/fixtures/${id}`, {
-    params: withToken({ include: 'localteam,visitorteam,league,runs,venue' }),
+  const res = await fixtureClient.get('', {
+    params: withApiCricketKey({ method: 'get_events', event_key: id }),
   });
-  const fixture = res?.data?.data || null;
+  const fixture = Array.isArray(res?.data?.result) ? res.data.result[0] || null : null;
   fixtureCache.set(id, { ts: Date.now(), data: fixture });
   return fixture;
 };
@@ -78,13 +67,17 @@ const resolveSettledStatus = (bet, fixture) => {
   if (!isFixtureFinished(fixture)) return null;
   if (fixture?.draw_noresult === true) return null;
 
-  const winnerId = fixture?.winner_team_id;
   const winnerName = normalizeText(readWinnerName(fixture));
   const predictedTeamId = Number(bet?.predicted_team_id || 0);
   const predictedName = normalizeText(bet?.predicted_team);
 
-  if (winnerId != null && predictedTeamId > 0) {
-    return String(winnerId) === String(predictedTeamId) ? 'Paid Out' : 'Lost';
+  const homeTeamKey = Number(fixture?.home_team_key || 0);
+  const awayTeamKey = Number(fixture?.away_team_key || 0);
+  if (predictedTeamId > 0 && (homeTeamKey > 0 || awayTeamKey > 0) && winnerName) {
+    const homeWon = normalizeText(fixture?.event_home_team) === winnerName;
+    const awayWon = normalizeText(fixture?.event_away_team) === winnerName;
+    if (homeWon) return String(homeTeamKey) === String(predictedTeamId) ? 'Paid Out' : 'Lost';
+    if (awayWon) return String(awayTeamKey) === String(predictedTeamId) ? 'Paid Out' : 'Lost';
   }
   if (winnerName && predictedName) {
     return winnerName === predictedName ? 'Paid Out' : 'Lost';
