@@ -86,6 +86,17 @@ const createTables = async () => {
   await query(`IF OBJECT_ID('bets', 'U') IS NOT NULL AND COL_LENGTH('bets','predicted_team_id') IS NULL ALTER TABLE bets ADD predicted_team_id INT NULL;`);
   await query(`IF OBJECT_ID('bets', 'U') IS NOT NULL AND COL_LENGTH('bets','client_ref') IS NULL ALTER TABLE bets ADD client_ref VARCHAR(120) NULL;`);
   await query(`IF OBJECT_ID('bets', 'U') IS NOT NULL AND COL_LENGTH('bets','settled_at') IS NULL ALTER TABLE bets ADD settled_at DATETIME2 NULL;`);
+  await query(`
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_bets_user_client_ref' AND object_id = OBJECT_ID('bets'))
+       AND NOT EXISTS (
+         SELECT user_id, client_ref
+         FROM bets
+         WHERE client_ref IS NOT NULL
+         GROUP BY user_id, client_ref
+         HAVING COUNT(*) > 1
+       )
+    CREATE UNIQUE INDEX UX_bets_user_client_ref ON bets(user_id, client_ref) WHERE client_ref IS NOT NULL;
+  `);
 
   await query(`
     IF OBJECT_ID('token_blacklist', 'U') IS NULL

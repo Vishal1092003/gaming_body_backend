@@ -9,8 +9,8 @@ const DEFAULT_VAULT_URL = 'https://gamingbodysecrets.vault.azure.net/';
 const SETTING_DEFINITIONS = {
   PORT: { defaultValue: '8000', secret: false },
   JWT_SECRET: { required: true },
-  JWT_EXPIRY_DEFAULT: { defaultValue: '2d', environmentAliases: ['JWT_EXPIRY'] },
-  JWT_EXPIRY_REMEMBER_ME: { defaultValue: '30d' },
+  JWT_EXPIRY_DEFAULT: { defaultValue: '30d', environmentAliases: ['JWT_EXPIRY'] },
+  JWT_EXPIRY_REMEMBER_ME: { defaultValue: '90d' },
   DATABASE_URL: { required: true },
   SMTP_HOST: {},
   SMTP_PORT: { defaultValue: '587' },
