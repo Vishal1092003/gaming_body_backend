@@ -14,6 +14,7 @@ const walletRoutes = require('./routes/walletRoutes');
 const supportRoutes = require('./routes/supportRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const providerRoutes = require('./routes/providerRoutes');
+const { syncAllPendingBets } = require('./controllers/betController');
 const { isMailerConfigured } = require('./config/mailer');
 const { errorHandler, notFound } = require('./middleware/errorMiddleware');
 const { query } = require('./config/db');
@@ -105,6 +106,17 @@ const ensureDatabaseSchemaAndBootstrap = async () => {
   await query(`IF OBJECT_ID('bets', 'U') IS NOT NULL AND COL_LENGTH('bets','predicted_team_id') IS NULL ALTER TABLE bets ADD predicted_team_id INT NULL;`);
   await query(`IF OBJECT_ID('bets', 'U') IS NOT NULL AND COL_LENGTH('bets','client_ref') IS NULL ALTER TABLE bets ADD client_ref VARCHAR(120) NULL;`);
   await query(`IF OBJECT_ID('bets', 'U') IS NOT NULL AND COL_LENGTH('bets','settled_at') IS NULL ALTER TABLE bets ADD settled_at DATETIME2 NULL;`);
+  await query(`
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_bets_user_client_ref' AND object_id = OBJECT_ID('bets'))
+       AND NOT EXISTS (
+         SELECT user_id, client_ref
+         FROM bets
+         WHERE client_ref IS NOT NULL
+         GROUP BY user_id, client_ref
+         HAVING COUNT(*) > 1
+       )
+    CREATE UNIQUE INDEX UX_bets_user_client_ref ON bets(user_id, client_ref) WHERE client_ref IS NOT NULL;
+  `);
   await query(`
     IF OBJECT_ID('token_blacklist', 'U') IS NULL
     CREATE TABLE token_blacklist (
@@ -281,6 +293,20 @@ app.use('/api', liveRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
+const startBetSettlementLoop = () => {
+  const run = async () => {
+    try {
+      const settled = await syncAllPendingBets(100);
+      if (settled > 0) console.log(`[bet-sync] settled ${settled} pending bet(s)`);
+    } catch (error) {
+      console.warn('[bet-sync] background settlement failed:', error?.message || error);
+    }
+  };
+
+  setTimeout(run, 15000);
+  setInterval(run, 60 * 1000);
+};
+
 const start = async () => {
   try {
     await query('SELECT 1');
@@ -332,6 +358,7 @@ const start = async () => {
     const server = http.createServer(app);
     configureSocketServer(server);
     startApiCricketRealtime();
+    startBetSettlementLoop();
     server.listen(PORT, () => {
       console.log(`Backend listening on http://localhost:${PORT}`);
       console.log(`Health endpoint: http://localhost:${PORT}/api/health`);

@@ -18,8 +18,8 @@ const {
 } = require('../validation/schemas');
 
 const getJwtSecret = () => getSetting('JWT_SECRET');
-const DEFAULT_LOGIN_EXPIRY = getSetting('JWT_EXPIRY_DEFAULT', '2d');
-const REMEMBER_ME_EXPIRY = getSetting('JWT_EXPIRY_REMEMBER_ME', '30d');
+const DEFAULT_LOGIN_EXPIRY = getSetting('JWT_EXPIRY_DEFAULT', '30d');
+const REMEMBER_ME_EXPIRY = getSetting('JWT_EXPIRY_REMEMBER_ME', '90d');
 const getPasswordResetTtlMinutes = () => getNumberSetting('PASSWORD_RESET_TTL_MINUTES', 15);
 
 const getAdminSignupCodeHash = async () => {

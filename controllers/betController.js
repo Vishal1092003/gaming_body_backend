@@ -2,6 +2,7 @@ const axios = require('axios');
 const { query } = require('../config/db');
 const { betSchema } = require('../validation/schemas');
 const { getSetting } = require('../settings');
+const { emitToAdmins, emitToUser } = require('../services/socketService');
 
 const API_CRICKET_BASE = 'https://apiv2.api-cricket.com/cricket';
 const API_CRICKET_TIMEZONE = 'Asia/Kolkata';
@@ -32,6 +33,69 @@ const getApiCricketKey = () => String(getSetting('API_CRICKET_KEY') || '').trim(
 const withApiCricketKey = (params = {}) => ({ timezone: API_CRICKET_TIMEZONE, ...params, APIkey: getApiCricketKey() });
 
 const canSyncFixtures = () => getApiCricketKey() !== '';
+
+const BET_TARGET_PATH = '/src/bottombar/bethistory';
+
+const pickNotification = (row) => {
+  if (!row?.notification_id) return null;
+  return {
+    id: row.notification_id,
+    recipient_user_id: row.notification_recipient_user_id,
+    type: row.notification_type,
+    title: row.notification_title,
+    message: row.notification_message,
+    entity_type: row.notification_entity_type,
+    entity_id: row.notification_entity_id,
+    target_path: row.notification_target_path,
+    is_read: row.notification_is_read,
+    created_at: row.notification_created_at,
+  };
+};
+
+const pickBet = (row) => {
+  if (!row) return null;
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    date: row.date,
+    type: row.type,
+    stake: row.stake,
+    odds: row.odds,
+    winnings: row.winnings,
+    status: row.status,
+    match_label: row.match_label,
+    fixture_id: row.fixture_id,
+    predicted_team: row.predicted_team,
+    predicted_team_id: row.predicted_team_id,
+    client_ref: row.client_ref,
+    settled_at: row.settled_at,
+    created_at: row.created_at,
+  };
+};
+
+const emitBetWorkflowUpdate = ({ userId, eventName, reason, bet, balance, notification }) => {
+  const numericBalance = Number(balance || 0);
+  emitToUser(userId, 'wallet:update', {
+    balance: numericBalance,
+    reason,
+    betId: bet?.id || null,
+    serverTime: new Date().toISOString(),
+  });
+  emitToUser(userId, eventName, {
+    bet,
+    balance: numericBalance,
+    notification: notification || null,
+    serverTime: new Date().toISOString(),
+  });
+  if (notification) emitToUser(userId, 'notification:new', notification);
+  emitToAdmins('bet:admin:update', {
+    event: eventName,
+    userId,
+    bet,
+    balance: numericBalance,
+    serverTime: new Date().toISOString(),
+  });
+};
 
 const readWinnerName = (fixture) => {
   const note = String(fixture?.event_status_info || fixture?.event_status || '').trim();
@@ -115,7 +179,36 @@ const syncPendingRows = async (rows = []) => {
 
     const winnings = nextStatus === 'Paid Out' ? Math.round(Number(row.stake || 0) * Number(row.odds || 0)) : 0;
     const result = await query(
-      `DECLARE @Settled TABLE (user_id INT, winnings DECIMAL(12,2));
+      `DECLARE @Settled TABLE (
+         id INT,
+         user_id INT,
+         [date] DATE,
+         [type] VARCHAR(16),
+         stake DECIMAL(12,2),
+         odds DECIMAL(10,2),
+         winnings DECIMAL(12,2),
+         status VARCHAR(32),
+         match_label VARCHAR(128),
+         fixture_id VARCHAR(40),
+         predicted_team VARCHAR(64),
+         predicted_team_id INT,
+         client_ref VARCHAR(120),
+         settled_at DATETIME2,
+         created_at DATETIME2
+       );
+       DECLARE @Notice TABLE (
+         id INT,
+         recipient_user_id INT,
+         type VARCHAR(64),
+         title VARCHAR(120),
+         message VARCHAR(400),
+         entity_type VARCHAR(64),
+         entity_id INT,
+         target_path VARCHAR(240),
+         is_read BIT,
+         created_at DATETIME2
+       );
+       DECLARE @FinalBalance DECIMAL(12,2);
 
        BEGIN TRY
          BEGIN TRAN;
@@ -124,7 +217,12 @@ const syncPendingRows = async (rows = []) => {
             SET status = $1,
                 winnings = $2,
                 settled_at = SYSUTCDATETIME()
-          OUTPUT INSERTED.user_id, INSERTED.winnings INTO @Settled(user_id, winnings)
+          OUTPUT INSERTED.id, INSERTED.user_id, INSERTED.[date], INSERTED.[type], INSERTED.stake,
+                 INSERTED.odds, INSERTED.winnings, INSERTED.status, INSERTED.match_label,
+                 INSERTED.fixture_id, INSERTED.predicted_team, INSERTED.predicted_team_id,
+                 INSERTED.client_ref, INSERTED.settled_at, INSERTED.created_at
+            INTO @Settled(id, user_id, [date], [type], stake, odds, winnings, status, match_label,
+                          fixture_id, predicted_team, predicted_team_id, client_ref, settled_at, created_at)
           WHERE id = $3
             AND status = 'Pending';
 
@@ -136,16 +234,72 @@ const syncPendingRows = async (rows = []) => {
              INNER JOIN @Settled s ON s.user_id = u.id;
          END;
 
+         SELECT TOP 1 @FinalBalance = u.balance
+           FROM users u
+           INNER JOIN @Settled s ON s.user_id = u.id;
+
+         INSERT INTO notifications (recipient_user_id, type, title, message, entity_type, entity_id, target_path)
+         OUTPUT INSERTED.id, INSERTED.recipient_user_id, INSERTED.type, INSERTED.title, INSERTED.message,
+                INSERTED.entity_type, INSERTED.entity_id, INSERTED.target_path, INSERTED.is_read, INSERTED.created_at
+           INTO @Notice(id, recipient_user_id, type, title, message, entity_type, entity_id, target_path, is_read, created_at)
+         SELECT s.user_id,
+                CASE WHEN $1 = 'Paid Out' THEN 'bet_won' ELSE 'bet_lost' END,
+                CASE WHEN $1 = 'Paid Out' THEN 'Bet won' ELSE 'Bet lost' END,
+                CASE WHEN $1 = 'Paid Out'
+                  THEN CONCAT('Your bet on ', s.match_label, ' won. Payout credited: ', CONVERT(VARCHAR(32), CAST(s.winnings AS DECIMAL(12,2))), '.')
+                  ELSE CONCAT('Your bet on ', s.match_label, ' lost. No payout was added.')
+                END,
+                'bet',
+                s.id,
+                $4
+           FROM @Settled s;
+
+         IF $1 = 'Paid Out'
+         BEGIN
+           INSERT INTO wallet_transactions (user_id, admin_user_id, amount, reason)
+           SELECT s.user_id, NULL, s.winnings, 'bet_payout_won'
+             FROM @Settled s
+            WHERE s.winnings > 0;
+         END;
+
          COMMIT;
-         SELECT COUNT(*) AS updated FROM @Settled;
+         SELECT CAST(CASE WHEN EXISTS (SELECT 1 FROM @Settled) THEN 1 ELSE 0 END AS INT) AS updated,
+                @FinalBalance AS balance,
+                s.*,
+                n.id AS notification_id,
+                n.recipient_user_id AS notification_recipient_user_id,
+                n.type AS notification_type,
+                n.title AS notification_title,
+                n.message AS notification_message,
+                n.entity_type AS notification_entity_type,
+                n.entity_id AS notification_entity_id,
+                n.target_path AS notification_target_path,
+                n.is_read AS notification_is_read,
+                n.created_at AS notification_created_at
+           FROM @Settled s
+           LEFT JOIN @Notice n ON n.entity_id = s.id;
        END TRY
        BEGIN CATCH
          IF @@TRANCOUNT > 0 ROLLBACK;
          THROW;
        END CATCH`,
-      [nextStatus, winnings, row.id]
+      [nextStatus, winnings, row.id, BET_TARGET_PATH]
     );
-    updates += Number(result.rows?.[0]?.updated || 0);
+    const settledRow = result.rows?.[0];
+    const updated = Number(settledRow?.updated || 0);
+    updates += updated;
+    if (updated > 0) {
+      const bet = pickBet(settledRow);
+      const notification = pickNotification(settledRow);
+      emitBetWorkflowUpdate({
+        userId: settledRow.user_id,
+        eventName: 'bet:settled',
+        reason: nextStatus === 'Paid Out' ? 'bet_won' : 'bet_lost',
+        bet,
+        balance: settledRow.balance,
+        notification,
+      });
+    }
   }
 
   return updates;
@@ -178,6 +332,19 @@ const syncPendingBetsForAdmin = async (adminId) => {
   return syncPendingRows(pending.rows);
 };
 
+const syncAllPendingBets = async (limit = 100) => {
+  if (!canSyncFixtures()) return 0;
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
+  const pending = await query(
+    `SELECT TOP (${safeLimit}) id, user_id, fixture_id, status, stake, odds, predicted_team, predicted_team_id
+       FROM bets
+      WHERE status = 'Pending'
+        AND fixture_id IS NOT NULL
+      ORDER BY created_at ASC`
+  );
+  return syncPendingRows(pending.rows);
+};
+
 const normalizeBetDate = (rawDate) => {
   if (!rawDate) return new Date().toISOString().slice(0, 10);
   const parsed = new Date(rawDate);
@@ -194,16 +361,60 @@ const createBet = async (req, res, next) => {
 
     const stake = Number(value.stake);
     const odds = Number(value.odds);
-    const winnings = ['Paid Out', 'Incremented'].includes(value.status) ? Math.round(stake * odds) : 0;
+    const winnings = 0;
+    const status = 'Pending';
     const betDate = normalizeBetDate(value.date);
 
     const result = await query(
       `DECLARE @Debited TABLE (balance DECIMAL(12,2));
        DECLARE @BetId INT;
        DECLARE @FinalBalance DECIMAL(12,2);
+       DECLARE @Notice TABLE (
+         id INT,
+         recipient_user_id INT,
+         type VARCHAR(64),
+         title VARCHAR(120),
+         message VARCHAR(400),
+         entity_type VARCHAR(64),
+         entity_id INT,
+         target_path VARCHAR(240),
+         is_read BIT,
+         created_at DATETIME2
+       );
 
        BEGIN TRY
          BEGIN TRAN;
+
+         IF $12 IS NOT NULL
+         BEGIN
+           SELECT TOP 1 @BetId = id
+             FROM bets WITH (UPDLOCK, HOLDLOCK)
+            WHERE user_id = $2
+              AND client_ref = $12;
+
+           IF @BetId IS NOT NULL
+           BEGIN
+             SELECT @FinalBalance = balance FROM users WHERE id = $2;
+             COMMIT;
+             SELECT CAST(1 AS INT) AS ok,
+                    CAST(1 AS INT) AS duplicate,
+                    @FinalBalance AS balance,
+                    b.*,
+                    CAST(NULL AS INT) AS notification_id,
+                    CAST(NULL AS INT) AS notification_recipient_user_id,
+                    CAST(NULL AS VARCHAR(64)) AS notification_type,
+                    CAST(NULL AS VARCHAR(120)) AS notification_title,
+                    CAST(NULL AS VARCHAR(400)) AS notification_message,
+                    CAST(NULL AS VARCHAR(64)) AS notification_entity_type,
+                    CAST(NULL AS INT) AS notification_entity_id,
+                    CAST(NULL AS VARCHAR(240)) AS notification_target_path,
+                    CAST(NULL AS BIT) AS notification_is_read,
+                    CAST(NULL AS DATETIME2) AS notification_created_at
+               FROM bets b
+              WHERE b.id = @BetId;
+             RETURN;
+           END;
+         END;
 
          UPDATE users
             SET balance = balance - $1
@@ -223,17 +434,41 @@ const createBet = async (req, res, next) => {
 
          SET @BetId = SCOPE_IDENTITY();
 
-         IF $7 IN ('Paid Out', 'Incremented')
-         BEGIN
-           UPDATE users SET balance = balance + $6 WHERE id = $2;
-         END;
-
          SELECT @FinalBalance = balance FROM users WHERE id = $2;
+
+         INSERT INTO notifications (recipient_user_id, type, title, message, entity_type, entity_id, target_path)
+         OUTPUT INSERTED.id, INSERTED.recipient_user_id, INSERTED.type, INSERTED.title, INSERTED.message,
+                INSERTED.entity_type, INSERTED.entity_id, INSERTED.target_path, INSERTED.is_read, INSERTED.created_at
+           INTO @Notice(id, recipient_user_id, type, title, message, entity_type, entity_id, target_path, is_read, created_at)
+         SELECT $2,
+                'bet_placed',
+                'Bet placed',
+                CONCAT('Your stake of ', CONVERT(VARCHAR(32), CAST($1 AS DECIMAL(12,2))), ' was accepted for ', $8, '.'),
+                'bet',
+                @BetId,
+                $13;
+
+         INSERT INTO wallet_transactions (user_id, admin_user_id, amount, reason)
+         VALUES ($2, NULL, -ABS($1), 'bet_stake_placed');
 
          COMMIT;
 
-         SELECT CAST(1 AS INT) AS ok, @FinalBalance AS balance, b.*
+         SELECT CAST(1 AS INT) AS ok,
+                CAST(0 AS INT) AS duplicate,
+                @FinalBalance AS balance,
+                b.*,
+                n.id AS notification_id,
+                n.recipient_user_id AS notification_recipient_user_id,
+                n.type AS notification_type,
+                n.title AS notification_title,
+                n.message AS notification_message,
+                n.entity_type AS notification_entity_type,
+                n.entity_id AS notification_entity_id,
+                n.target_path AS notification_target_path,
+                n.is_read AS notification_is_read,
+                n.created_at AS notification_created_at
            FROM bets b
+           LEFT JOIN @Notice n ON n.entity_id = b.id
           WHERE b.id = @BetId;
        END TRY
        BEGIN CATCH
@@ -247,12 +482,13 @@ const createBet = async (req, res, next) => {
         value.type,
         odds,
         winnings,
-        value.status,
+        status,
         value.match,
         value.fixtureId != null ? String(value.fixtureId) : null,
         value.predictedTeam || null,
         value.predictedTeamId || null,
         value.clientRef || null,
+        BET_TARGET_PATH,
       ]
     );
 
@@ -260,8 +496,25 @@ const createBet = async (req, res, next) => {
     if (!row?.ok) {
       return res.status(400).json({ error: 'Insufficient balance' });
     }
-    const { ok, balance, ...bet } = row;
-    return res.status(201).json({ message: 'Bet created', bet, balance: Number(balance || 0) });
+    const bet = pickBet(row);
+    const notification = pickNotification(row);
+    const balance = Number(row.balance || 0);
+    if (!row.duplicate) {
+      emitBetWorkflowUpdate({
+        userId: req.user.sub,
+        eventName: 'bet:placed',
+        reason: 'bet_placed',
+        bet,
+        balance,
+        notification,
+      });
+    }
+    return res.status(row.duplicate ? 200 : 201).json({
+      message: row.duplicate ? 'Bet already created' : 'Bet created',
+      bet,
+      balance,
+      notification,
+    });
   } catch (err) {
     next(err);
   }
@@ -293,8 +546,10 @@ const getHistory = async (req, res, next) => {
       [req.user.sub]
     );
     const balance = await query('SELECT balance FROM users WHERE id = $1', [req.user.sub]);
+    const requesterId = Number(req.user.sub);
+    const history = (result.rows || []).filter((row) => Number(row.user_id) === requesterId);
     return res.json({
-      history: result.rows,
+      history,
       balance: Number(balance.rows?.[0]?.balance || 0),
     });
   } catch (err) {
@@ -466,4 +721,4 @@ const getAdminHistory = async (req, res, next) => {
   }
 };
 
-module.exports = { createBet, getHistory, getWins, getLosses, getSummary, getAdminHistory };
+module.exports = { createBet, getHistory, getWins, getLosses, getSummary, getAdminHistory, syncAllPendingBets };
